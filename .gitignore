@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 __pycache__/
 *.py[cod]
 *.so
@@ -8,3 +9,15 @@ venv/
 .venv/
 bin/
 lib/
+=======
+lightning_logs/
+lodestar_weights
+UNet_training_dataset.npz
+UNet_reg_ellipse_particles
+UNet_model_ellipse_particles
+UNet_model_simple_particles.pth
+UNet_reg_simple_particles.pth
+UNet_model_core-shell.pth
+UNet_reg_core-shell.pth
+.DS_Store
+>>>>>>> aaron/tracking-softmatter-aarond-dev
