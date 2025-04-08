@@ -463,8 +463,8 @@ def generate_particle_dataset(
     image_size,
     max_num_particles,
     core_particle_dict,
-    shell_particle_dict=None,
-    optics_properties=None
+    shell_particle_dict,
+    optics_properties=None,
     ):
     
     """Generates a dataset of simulated particle images and their corresponding
