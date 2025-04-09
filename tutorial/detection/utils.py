@@ -63,8 +63,12 @@ import math # Mathematical operations
 import random  # Generate random numbers.
 from itertools import cycle # Iterate over a list.
 import deeptrack as dt  # DeepTrack.
+from deeptrack.extras.radialcenter import radialcenter as rc 
 import deeplay as dl  # Deeplay.
 import imageio  # Creates images/video from data.
+from itertools import cycle # Iterate over a list.
+import matplotlib.animation as animation  # Animation package.
+import matplotlib.patches as patches  # Patches for drawing shapes.
 import matplotlib.pyplot as plt # Plotting package.
 import numpy as np  # Scientific computing using arrays.
 import scipy  # Optimized for linear algebra, signal processing.
@@ -73,7 +77,8 @@ import tkinter as tk  # Package for GUI.
 import torch  # Import PyTorch library for general neural network applications.
 import trackpy as tp  # Particle tracking package. Crocker & Grier method.
 
-from deeptrack.extras.radialcenter import radialcenter as rc
+
+
 
 
 def generate_centroids(num_particles, image_size, particle_radius):
@@ -207,7 +212,7 @@ def transform_to_video(
         The generated video frames as a NumPy array.
         
     """
-
+    
     # Initialize defaults if not provided.
     core_particle_props = core_particle_props or {}
     shell_particle_props = shell_particle_props or {}
@@ -458,9 +463,10 @@ def generate_particle_dataset(
     image_size,
     max_num_particles,
     core_particle_dict,
-    shell_particle_dict,
+    shell_particle_dict=None,
     optics_properties=None
     ):
+    
     """Generates a dataset of simulated particle images and their corresponding
     ground truth maps with non-overlapping particle positions.
 
@@ -514,12 +520,17 @@ def generate_particle_dataset(
 
         # Generate a random particle number.
         randomized_num_particles = np.random.randint(0, max_num_particles)
+        # For some reason randint(1,1) complains, so we handle the 0 case.
         if randomized_num_particles == 0:
-            randomized_num_particles = 1 
+            randomized_num_particles = 1
         
          # Extract radius from dictionary.
         particle_radius = core_particle_dict["radius"]
-        shell_radius = shell_particle_dict["radius"]
+        
+        if shell_particle_dict is not None:
+            shell_radius = shell_particle_dict["radius"]
+        else:
+            shell_radius = particle_radius
         
         # Calls variable as a float32 if variable is callable.
         def callable_to_value(z):
@@ -552,7 +563,6 @@ def generate_particle_dataset(
             > max_axis_particle else particle_radius
             ) / normalization_factor
 
-        
         # Generate non-overlapping positions for the ground truth.
         ground_truth_positions = generate_centroids(
             num_particles=randomized_num_particles,
@@ -561,7 +571,6 @@ def generate_particle_dataset(
         )
 
         # Create the ground truth map based on the ground truth positions.
-
         # The radius of the gaussian is the minimum semiaxis, to minimize 
         # overlapping between near ellipses.
         _ground_truth_map = create_ground_truth_map(
@@ -569,7 +578,7 @@ def generate_particle_dataset(
             image_size=image_size,
             sigma=probability_cloud_size / 3, 
         )
-
+         
         # Convert the ground truth positions to a simulated image.
         _simulated_image = transform_to_video(
             ground_truth_positions,
@@ -578,7 +587,7 @@ def generate_particle_dataset(
             optics_props=optics_properties,
             image_size=image_size
         )
-
+        
         # Store the generated image and ground truth map.
         images[i] = _simulated_image
         maps[i] = _ground_truth_map[:, :, np.newaxis]
@@ -829,6 +838,10 @@ def evaluate_locs(predicted_positions, true_positions, distance_th=5):
         (True positives, False positives, False negatives, F1 score, RMS-error)
 
     """
+    
+    # Checks if distance threshold is given in pixel units. 
+    if distance_th >= 100:
+        distance_th /= 100
 
     # Checks if there is an extra axis accounting for orientation angles.
     if predicted_positions.shape[1] == 3:
@@ -878,19 +891,32 @@ def evaluate_locs(predicted_positions, true_positions, distance_th=5):
     return TP, FP, FN, F1, RMSE
 
 
-def normalize_min_max(image_array, squeeze_in_2D=False):
+def normalize_min_max(
+    image_array, 
+    squeeze_in_2D=False, 
+    minimum_value=0.0, 
+    maximum_value=1.0
+    ):
     """Normalizes an array using min-max normalization to scale values
     between 0 and 1. Optionally squeezes the array to 2D if it has a
     single color channel.
 
     Parameters
     ----------
-    image_array: np.ndarray
+    image_array : np.ndarray
         Array representing an image to be normalized.
 
-    squeeze_in_2D: bool
+    squeeze_in_2D : bool
         If True, reduces the image array to 2D by removing 
         single-dimensional entries.
+
+    minimum_value : float, optional
+        Custom minimum value to use for normalization. If None, the
+        minimum is computed from the array.
+
+    maximum_value : float, optional
+        Custom maximum value to use for normalization. If None, the
+        maximum is computed from the array.
 
     Returns
     -------
@@ -899,31 +925,31 @@ def normalize_min_max(image_array, squeeze_in_2D=False):
 
     Raises
     ------
-        ValueError: If the input array has no range (i.e., max and min values 
-        are equal).
-
+    ValueError
+        If the normalization range is zero (max == min).
     """
     # Eliminates an extra dimension if specified.
     if squeeze_in_2D:
         image_array = np.squeeze(image_array)
 
-    # Set the boundary values.
-    max_intensity = np.max(image_array)
+    # Use custom or automatic min/max values.
     min_intensity = np.min(image_array)
+    max_intensity = np.max(image_array)
 
-    # Raise an error if the array has no range
-    # (i.e., max and min values are equal).
-    if max_intensity == min_intensity:
-        raise ValueError(
-            "Cannot normalize an array with a constant intensity value."
-        )
+    if max_intensity == min_intensity or max_intensity < min_intensity:
+        raise ValueError("Cannot normalize array. Check maximum and minimum values.")
 
     # Perform min-max normalization.
-    normalized_image_array = (image_array - min_intensity) / (
-        max_intensity - min_intensity
-    )
+    normalized_image_array = (image_array - min_intensity) / (max_intensity - min_intensity)
 
+    # Rescale to minimum and maximum values.
+    normalized_image_array = (
+        (maximum_value - minimum_value) * normalized_image_array 
+        + minimum_value
+        )
+    
     return normalized_image_array
+
 
 
 def pad_to_square(image):
@@ -968,8 +994,8 @@ def pad_to_square(image):
 def locate_particle_centers(
     predicted_positions,
     simulated_image,
-    estimated_radius=15
-):
+    estimated_radius
+    ):
     """Locates the center of particles in an image by calculating the center
     of a region of interest (ROI) around each predicted position exploiting
     radial symmetry.
@@ -991,6 +1017,10 @@ def locate_particle_centers(
         Array of corrected particle positions.
 
     """
+    # Checks if estimated radius is given in pixel units.
+    if estimated_radius >= 100:
+        estimated_radius /= 100
+    
     corrected_positions = []
 
     for x, y in predicted_positions:
@@ -1078,10 +1108,10 @@ def plot_crops(crops_dataset, **kwargs):
     number_of_columns = 4
     number_of_rows = math.ceil(number_of_crops / number_of_columns)
 
-    if number_of_crops < number_of_columns:
+    if number_of_crops <= number_of_columns:
         number_of_rows = 1
         
-    # Create the figure and axes.
+    # Create a grid of subplots with the specified number of rows and columns.
     fig, axes = plt.subplots(
         number_of_rows,
         number_of_columns,
@@ -1093,7 +1123,7 @@ def plot_crops(crops_dataset, **kwargs):
     # Plot each crop.
     for i in range(number_of_crops):
         # Select the subplot for the current crop.
-        axes[i].imshow(crops_dataset[i], cmap="gray", aspect="auto")
+        axes[i].imshow(crops_dataset[i], cmap="gray", aspect="equal")
         axes[i].set_title(f"Crop {i + 1}")
         axes[i].axis("off")  # Hide axes
 
@@ -1113,9 +1143,7 @@ def plot_crops(crops_dataset, **kwargs):
     plt.tight_layout()
     plt.show()
     
-import matplotlib.pyplot as plt
-import numpy as np
-from itertools import cycle
+
 
 
 def interactive_ruler(image):
@@ -1159,7 +1187,8 @@ def interactive_ruler(image):
         """
         Handle mouse click events to draw lines and calculate their lengths.
 
-        Args:
+        Parameters
+        ----------
             event (matplotlib.backend_bases.MouseEvent): The mouse click event.
         """
         if event.inaxes is not None:
@@ -1183,7 +1212,7 @@ def interactive_ruler(image):
                     [x1, x2], [y1, y2], 
                     'o-', 
                     color=color, 
-                    label=f'Semiaxis {len(line_lengths)}: {length:.1f} pixels'
+                    label=f'Segment {len(line_lengths)}: {length:.1f} pixels'
                     )
                 plt.draw()
 
@@ -1205,7 +1234,7 @@ def interactive_ruler(image):
     ax.imshow(
         image, 
         cmap='gray', 
-        origin='lower', 
+        #origin='lower', 
         #extent=[0, image.shape[1], 0, image.shape[0]]
         )
     ax.set_title("Click on two points to draw a line on the image")
