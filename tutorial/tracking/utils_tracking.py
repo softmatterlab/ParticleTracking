@@ -387,7 +387,7 @@ def play_video(
     for image in video:
         images.append([plt.imshow(image[:, :, 0], cmap="gray")])
 
-    anim = animation.ArtistAnimation(
+    anim = mpl.animation.ArtistAnimation(
         fig, images, interval=1e3 / fps, blit=True, repeat_delay=0
     )
 
