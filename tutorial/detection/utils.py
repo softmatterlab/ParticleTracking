@@ -463,7 +463,7 @@ def generate_particle_dataset(
     image_size,
     max_num_particles,
     core_particle_dict,
-    shell_particle_dict,
+    shell_particle_dict=None,
     optics_properties=None,
     ):
     
@@ -895,7 +895,7 @@ def normalize_min_max(
     image_array, 
     squeeze_in_2D=False, 
     minimum_value=0.0, 
-    maximum_value=1.0
+    maximum_value=1.0,
     ):
     """Normalizes an array using min-max normalization to scale values
     between 0 and 1. Optionally squeezes the array to 2D if it has a
