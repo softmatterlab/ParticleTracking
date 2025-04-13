@@ -1,13 +1,21 @@
 """Utility functions module for Particle Tracking example notebooks.
 
+This module provides utility functions for generating datasets, visualizing
+data, and evaluating particle localization methods. It includes functions for
+creating ground truth maps, generating simulated images, and evaluating
+predicted positions against true positions. The module also provides
+visualization functions for plotting images, masks, and ground truth maps.
+as well as for plotting predicted positions. The functions are designed to
+work with particle tracking data and can be used in conjunction with
+DeepTrack2 and Deeplay libraries for generating and processing particle
+tracking datasets.
+
 Key Features
 ------------
-
 - **Dataset generation**
 
-    Functions provided to generate datasets with
-    random number generation and DeepTrack2 scatterers to train
-    neural networks.
+    Functions provided to generate datasets with random number generation and 
+    DeepTrack2 scatterers to train neural networks.
 
 - **Data visualization and processing**
 
@@ -22,7 +30,6 @@ Key Features
 
 Module Structure
 ----------------
-
 Methods:
 
     - `create_ground_truth_map`: Creates probability density.
@@ -57,8 +64,19 @@ Methods:
     
     -`transform_to_video`: Creates a video from ground truth positions.
 
-"""
+# =============================================================================
+# Spatial Quantities and Units
+# =============================================================================
+# All spatial quantities (e.g. radius, sigma, position) are internally expected 
+# and processed in **pixels**. However, most functions provide an optional 
+# `pixel_size_nm` argument (default: 100 nm) to allow input in nanometers.
+# If `pixel_size_nm` is specified, physical quantities will be automatically 
+# converted to pixel units. Set `pixel_size_nm=None` to disable conversion 
+# and use raw pixel units directly.
+# =============================================================================
 
+"""
+from __future__ import annotations
 import math # Mathematical operations
 import random  # Generate random numbers.
 from itertools import cycle # Iterate over a list.
@@ -78,25 +96,29 @@ import torch  # Import PyTorch library for general neural network applications.
 import trackpy as tp  # Particle tracking package. Crocker & Grier method.
 
 
-
-
-
-def generate_centroids(num_particles, image_size, particle_radius):
-    """Generates non-overlapping particle positions in a 2D image. Uses random
-    number generation. Attempts to place particles at random, avoiding
-    overlapping centers by setting a minimum separation distance equal
-    to a specified particle radius.
+def generate_centroids(
+    num_particles: int, 
+    image_size: int, 
+    particle_radius: int,
+    pixel_size_nm: float = 100,
+) -> np.ndarray:
+    """Generates non-overlapping particle positions in a 2D image. 
+    
+    Uses random number generation. Attempts to place particles at random, 
+    avoiding overlapping centers by setting a minimum separation distance 
+    equal to a specified particle radius.
 
     Parameters
     ----------
     image_size: int
         The width and height of the square image in pixels.
-
     num_particles: int
         The number of particles to place in the image.
-
     particle_radius: int
         The radius of each particle in pixels.
+    pixel_size_nm: float, optional
+        The size of each pixel in nanometers. Default is 100 nm. Set it to None
+        for pixel units.
 
     Returns
     -------
@@ -108,10 +130,10 @@ def generate_centroids(num_particles, image_size, particle_radius):
     # Pre-allocate an array to store the position of particles.
     particles = []
 
-    # Ensure the radius is defined in pixel units. Effective resolution is
-    # set to 1px = 100nm.
-    if particle_radius >= 100:
-        particle_radius /= 100
+    #
+    if pixel_size_nm is not None:
+        particle_radius /= pixel_size_nm
+
     # Condition of no overlap according to hard spheres.
     min_distance = 2 * particle_radius
 
@@ -167,42 +189,44 @@ def generate_centroids(num_particles, image_size, particle_radius):
             
     return np.array(particles)
 
-def transform_to_video(
-    trajectory_data,
-    core_particle_props=None,
-    shell_particle_props=None,
-    optics_props=None,
-    background_props=None,
-    image_size=None,
-    save_video=False,
-    path="",
-):
-    """Transforms trajectory data into a video simulation using a
-    specified optical setup and particle properties.
 
+def transform_to_video(
+    trajectory_data: np.ndarray,
+    core_particle_props: dict = None,
+    shell_particle_props: dict = None,
+    optics_props: dict = None,
+    background_props: dict = None,
+    image_size: int = None,
+    save_video: bool = False,
+    path: str = "",
+) -> np.ndarray:
+    """Transforms trajectories into a video.
+
+    This function generates a video of particles moving in a 2D plane. The 
+    function takes trajectory data as input and generates a video that can be 
+    saved to disk if desired. The function allows for the customization of 
+    particle properties, background noise, and optical properties.
+    
     Parameters
     ----------
     trajectory_data: np.ndarray
         Trajectory data of particles with shape (number_of_particles,
         number_of_frames, dimensions).
-
-    particle_props: dict, optional
+    core_particle_props: dict, optional
         Dictionary containing additional particle properties (e.g 'intensity',
         'radius').
-
+    shell_particle_props: dict, optional
+        Dictionary containing additional particle properties (e.g 'intensity',
+        'radius').
     optics_props: dict, optional
         Dictionary containing optical properties (e.g., 'NA', 'wavelength').
-
     background_props: dict, optional
         Dictionary containing background properties (e.g., 'background_mean',
         'background_std').
-
     image_size: int, optional
         Size of the output image (square shape).
-
     save_video: bool, optional
         Whether to save the generated video to disk.
-
     path: str, optional
         File path to save the video, required if `save_video` is True.
 
@@ -216,25 +240,12 @@ def transform_to_video(
     # Initialize defaults if not provided.
     core_particle_props = core_particle_props or {}
     shell_particle_props = shell_particle_props or {}
-    #optics_props = optics_props or {}
     background_props = background_props or {}
-    #image_size = image_size  or 256 # Default image size if not specified.
     
     # Initialize particle dictionaries.
     _core_particle_dict = {} 
     _shell_particle_dict = {}
     
-    # # Default optical properties.
-    # _optics_dict = {
-    #     "NA": 1.33,  # Numerical aperture.
-    #     "wavelength": 638.0 * dt.units.nm,  # Wavelength in nanometers.
-    #     "refractive_index_medium": 1.33,
-    #     "output_region": [0, 0, image_size, image_size],
-    #     "magnification": 1,
-    #     "resolution": 100 * dt.units.nm,  # Camera resolution.
-    #     #"return_field": True,
-    # }
-
     # Default background properties.
     _background_dict = {
         "background_mean": 100,  # Mean background intensity.
@@ -244,7 +255,6 @@ def transform_to_video(
     # Update the default dictionaries with user-defined properties.
     _core_particle_dict.update(core_particle_props)
     _shell_particle_dict.update(shell_particle_props)
-    #_optics_dict.update(optics_props)   
     _background_dict.update(background_props)
     
     # Check if trajectory data has 3 axis (X, Y, angle).
@@ -299,12 +309,12 @@ def transform_to_video(
         )
 
     # Sequential definition of particles with changing positions per frame.
-    sequential_particle = dt.Sequential(
+    sequential_inner_particle = dt.Sequential(
         inner_particle,
         position=lambda trajectory, sequence_step: trajectory[sequence_step],
         )
 
-    sequential_particle1 = dt.Sequential(
+    sequential_outer_particle = dt.Sequential(
         outer_particle,
         position=lambda trajectory, sequence_step: trajectory[sequence_step],
         )
@@ -312,10 +322,28 @@ def transform_to_video(
     # Define background intensity variation over time.
     background = dt.Add(value=_background_dict["background_mean"])
 
-    def background_variation(previous_values, previous_value):
+
+    def background_variation(
+        previous_values: list = None,
+        previous_value: float = None,
+    ) -> float:
+        """Returns a new background value with random Gaussian noise.
+
+        Parameters
+        ----------
+        previous_values: list, optional
+            List of previous background values.
+
+        previous_value: float, optional
+            Previous background value.
+
+        Returns
+        -------
+        float
+            New background value with added noise.
+
         """
-        Returns a new background value with random Gaussian noise.
-        """
+        
         return (previous_values or [previous_value])[
             0
             ] + np.random.randn() * _background_dict["background_std"]
@@ -340,8 +368,8 @@ def transform_to_video(
     # Create the sample to render: combine particles, background, and optics.
     sample = (
         optics(
-            (sequential_particle >> sequential_particle1)
-            ^ sequential_particle.number_of_particles
+            (sequential_inner_particle >> sequential_outer_particle)
+            ^ sequential_inner_particle.number_of_particles
             )
         >> dt.Divide(scale_factor)
         >> sequential_background
@@ -366,29 +394,34 @@ def transform_to_video(
     return _video.__abs__() # Ensure real-valued field.
 
 
-
-
-def create_ground_truth_map(ground_truth_positions, image_size=128, sigma=1.0):
-
+def create_ground_truth_map(
+    ground_truth_positions: np.ndarray,
+    image_size: int = 128,
+    sigma: float = 1.0,
+    pixel_size_nm: float = 100,
+) -> np.ndarray:
     """Create a 2D ground truth map with Gaussians at particle positions.
 
+    This function generates a 2D intensity map with Gaussian blobs centered at 
+    particle positions. The Gaussian blobs represent the probability density.
+    The function can be used to create ground truth maps for particle tracking
+    applications, where the positions of particles are known and the goal is to
+    create a visual representation of their distribution. The parameter sigma 
+    controls the width of the Gaussian blobs.
+    
     Parameters
     ----------
-
     gt_pos: np.ndarray
         Ground truth positions of particles and orientation angles.
-
     image_size: int
         Size of the square image (image_size x image_size).
-
     sigma: np.ndarray or float
-        Standard deviation of the Gaussian function. 
+        Standard deviation of the Gaussian function.
         Optional dimensions 1 or 2, corresponding to an ellipsoidal Gaussian.
 
     Returns
     -------
-
-    - ground_truth_map: np.ndarray
+    ground_truth_map: np.ndarray
         The resulting 2D intensity map.
 
     """
@@ -398,10 +431,9 @@ def create_ground_truth_map(ground_truth_positions, image_size=128, sigma=1.0):
     # Ensure that sigma has non zero dimensions, even though is a scalar.
     sigma = np.atleast_1d(sigma)
     
-    # Ensure the radius is defined in pixel units. Effective resolution is
-    # set to 1px = 100nm. 
-    if (sigma >= 100).any(): # Checks if any value satisfies condition.
-        sigma = sigma / 100
+    # Optional sanity check: warn if sigma looks suspiciously large
+    if pixel_size_nm is not None:
+        sigma /= pixel_size_nm
         
     # Assign Gaussian variance to each semiaxis.
     # Equal variance corresponds to a circular Gaussian.
@@ -459,14 +491,14 @@ def create_ground_truth_map(ground_truth_positions, image_size=128, sigma=1.0):
 
 
 def generate_particle_dataset(
-    num_samples,
-    image_size,
-    max_num_particles,
-    core_particle_dict,
-    shell_particle_dict=None,
-    optics_properties=None,
-    ):
-    
+    num_samples: int,
+    image_size: int,
+    max_num_particles: int,
+    core_particle_dict: dict,
+    shell_particle_dict: dict = None,
+    optics_properties: dict = None,
+    pixel_size_nm: float = 100,
+) -> tuple:
     """Generates a dataset of simulated particle images and their corresponding
     ground truth maps with non-overlapping particle positions.
 
@@ -474,25 +506,25 @@ def generate_particle_dataset(
     ----------
     num_samples: int
         The number of simulated images to be generated.
-
     image_size: int
         The width and height of the square images in pixels.
-
-    num_particles: int
-        The average number of particles per image.
-
+    max_num_particles: int
+        The maximum number of particles per image.
     core_particle_dict: dict
         Properties of the core particle to be passed to DeepTrack.
-
     shell_particle_dict: dict
         Properties of the shell to be passed to DeepTrack.
+    optics_properties: dict
+        Properties of the optics to be passed to DeepTrack.
+    pixel_size_nm: float
+        The size of each pixel in nanometers. Default is 100 nm. Set it to None
+        if pixel size is not applicable.
 
     Returns
     -------
     images: np.ndarray
         Array of shape (num_samples, image_size, image_size) containing
         the generated simulated images.
-
     maps: np.ndarray
         Array of shape (num_samples, image_size, image_size, 1) containing
         the corresponding ground truth maps.
@@ -546,28 +578,24 @@ def generate_particle_dataset(
         max_axis_shell = np.max(shell_radius)
         max_axis_particle = np.max(particle_radius)
         
-        # Ensure pixel units instead of nanometers (1px = 100nm).
-        normalization_factor = 1
-        if max_axis_shell >= 100:
-            normalization_factor = 100
-        
         # Extract minimum radius in pixel units.
         total_particle_radius = np.maximum(
             max_axis_particle, 
             max_axis_shell
-            ) / normalization_factor
+            )
         
         # Size of probability cloud set as the biggest body (pixel units).
         probability_cloud_size = (
             shell_radius if max_axis_shell
             > max_axis_particle else particle_radius
-            ) / normalization_factor
+            )
 
         # Generate non-overlapping positions for the ground truth.
         ground_truth_positions = generate_centroids(
             num_particles=randomized_num_particles,
             image_size=image_size,
             particle_radius=total_particle_radius,
+            pixel_size_nm=pixel_size_nm,
         )
 
         # Create the ground truth map based on the ground truth positions.
@@ -577,6 +605,7 @@ def generate_particle_dataset(
             ground_truth_positions,
             image_size=image_size,
             sigma=probability_cloud_size / 3, 
+            pixel_size_nm=pixel_size_nm,
         )
          
         # Convert the ground truth positions to a simulated image.
@@ -585,7 +614,7 @@ def generate_particle_dataset(
             core_particle_props=core_particle_dict,
             shell_particle_props=shell_particle_dict,
             optics_props=optics_properties,
-            image_size=image_size
+            image_size=image_size,
         )
         
         # Store the generated image and ground truth map.
@@ -596,18 +625,17 @@ def generate_particle_dataset(
     return images, maps
 
 
-def plot_predicted_positions(**kwargs):
+def plot_predicted_positions(**kwargs: dict) -> None:
     """Plot an image with predicted and ground truth particle positions.
 
-    This function visualizes an image with an overlay of particle positions. 
+    This function visualizes an image with overlaid particle positions. 
     The predicted positions are plotted in red, and the ground truth positions
     are plotted in blue. Both predicted_positions and ground_truth_positions
     are optional.
 
     Parameters
     ----------
-
-    - **kwargs: dict
+    **kwargs: dict
         - image: 2D array-like, optional.
             The image of the experiment or simulation, displayed in grayscale.
         - predicted_positions: 2D array-like (N, 2), optional.
@@ -620,8 +648,6 @@ def plot_predicted_positions(**kwargs):
     Returns
     -------
     None
-        The function displays the plot directly.
-
         The function directly plots the image with the predicted and ground
         truth positions superimposed. If neither predicted_positions nor
         ground_truth_positions is passed, the function will print a message
@@ -630,7 +656,7 @@ def plot_predicted_positions(**kwargs):
     Notes:
     ------
     - If both predicted_positions and ground_truth_positions are provided,
-    they will becompared visually on the same image.
+    they will be compared visually on the same image.
     - The coordinates for both predicted_positions and ground_truth_positions
     are assumed to be in (X, Y) format but will be swapped to (Y, X) for
     plotting since matplotlib addresses the vertical axis first
@@ -726,7 +752,7 @@ def plot_predicted_positions(**kwargs):
     plt.show()
 
 
-def plot_image_mask_ground_truth_map(**kwargs):
+def plot_image_mask_ground_truth_map(**kwargs: dict) -> None:
     """Plot an image with its corresponding mask (optional), ground truth map
     (optional) and title (optional).
 
@@ -816,7 +842,12 @@ def plot_image_mask_ground_truth_map(**kwargs):
     plt.show()
 
 
-def evaluate_locs(predicted_positions, true_positions, distance_th=5):
+def evaluate_locs(
+    predicted_positions: np.ndarray, 
+    true_positions: np.ndarray, 
+    distance_th: float = 5,
+    pixel_size_nm: float = 100,
+) -> tuple:
     """Evaluate predicted positions against true positions using a distance 
     threshold.
 
@@ -831,6 +862,10 @@ def evaluate_locs(predicted_positions, true_positions, distance_th=5):
     distance_th: float
         Distance threshold (in pixels) for considering a match.
 
+    pixel_size_nm: float, optional
+        The size of each pixel in nanometers. Default is 100 nm. Set it to None
+        if pixel size is not applicable.
+
     Returns
     -------
     int, int, int, float, float
@@ -838,10 +873,10 @@ def evaluate_locs(predicted_positions, true_positions, distance_th=5):
         (True positives, False positives, False negatives, F1 score, RMS-error)
 
     """
-    
-    # Checks if distance threshold is given in pixel units. 
-    if distance_th >= 100:
-        distance_th /= 100
+
+    if pixel_size_nm is not None:
+        # Convert distance threshold to pixel units.
+        distance_th /= pixel_size_nm
 
     # Checks if there is an extra axis accounting for orientation angles.
     if predicted_positions.shape[1] == 3:
@@ -853,7 +888,7 @@ def evaluate_locs(predicted_positions, true_positions, distance_th=5):
     # Compute the pairwise distance matrix.
     distance_matrix = scipy.spatial.distance_matrix(
         predicted_positions, 
-        true_positions
+        true_positions,
         )
 
     # Solves the Linear Sum Assignment Problem to find and match the indices of
@@ -892,11 +927,11 @@ def evaluate_locs(predicted_positions, true_positions, distance_th=5):
 
 
 def normalize_min_max(
-    image_array, 
-    squeeze_in_2D=False, 
-    minimum_value=0.0, 
-    maximum_value=1.0,
-    ):
+    image_array: np.ndarray, 
+    squeeze_in_2D: bool = False, 
+    minimum_value: float = 0.0, 
+    maximum_value: float = 1.0,
+) -> np.ndarray:
     """Normalizes an array using min-max normalization to scale values
     between 0 and 1. Optionally squeezes the array to 2D if it has a
     single color channel.
@@ -951,8 +986,7 @@ def normalize_min_max(
     return normalized_image_array
 
 
-
-def pad_to_square(image):
+def pad_to_square(image: np.ndarray) -> np.ndarray:
     """Pads any image to a squared size LxL, with L being the lowest power of 2 
     greater or equal to the largest side of the image.
 
@@ -992,10 +1026,11 @@ def pad_to_square(image):
 
 
 def locate_particle_centers(
-    predicted_positions,
-    simulated_image,
-    estimated_radius
-    ):
+    predicted_positions: list or tuple,
+    simulated_image: np.ndarray,
+    estimated_radius: int,
+    pixel_size_nm: float=100,
+) -> np.ndarray:
     """Locates the center of particles in an image by calculating the center
     of a region of interest (ROI) around each predicted position exploiting
     radial symmetry.
@@ -1008,8 +1043,13 @@ def locate_particle_centers(
     simulated_image: np.ndarray
         Image array in which particles are located.
 
-    roi_size: int
-        Size of the region of interest (ROI) around each predicted position.
+    estimated_radius: int
+        Estimated radius of the particles in pixels.
+        This is used to define the size of the ROI.
+
+    pixel_size_nm: float, optional
+        The size of each pixel in nanometers. Default is 100 nm. Set it to None
+        if pixel size is not applicable.
 
     Returns
     -------
@@ -1017,10 +1057,11 @@ def locate_particle_centers(
         Array of corrected particle positions.
 
     """
-    # Checks if estimated radius is given in pixel units.
-    if estimated_radius >= 100:
-        estimated_radius /= 100
     
+    if pixel_size_nm is not None:
+        # Convert distance threshold to pixel units.
+        estimated_radius /= pixel_size_nm
+     
     corrected_positions = []
 
     for x, y in predicted_positions:
@@ -1046,21 +1087,33 @@ def locate_particle_centers(
     return np.array(corrected_positions)
 
 
-def mask_to_positions(mask):
-    from skimage.measure import label, regionprops
+def mask_to_positions(
+    mask: np.ndarray, 
+    intensity_image: np.ndarray=None,
+) -> np.ndarray:
     """Converts a mask to a list of positions.
     
     Parameters
     ----------
     mask: np.ndarray
-        An image which has been previously masked.
+        A binary mask where particles are located.
+        The mask should be a 2D array where non-zero values indicate the
+        presence of particles.
+
+    intensity_image: np.ndarray, optional
+        An intensity image to be used for weighted centroid calculation.
+        If provided, the function will calculate the weighted centroid
+        of the particles based on the intensity image.
 
     Returns
     -------
     np.ndarray
         A 2D array containing the coordinates of the center of particles.
     
-    """""
+    """
+
+    from skimage.measure import label, regionprops
+
     # Label the mask.
     # Determines the connectivity of pixels having the same value. 
     # 1-connectivity refers to direct connections in x and y directions. 
@@ -1068,16 +1121,25 @@ def mask_to_positions(mask):
     
     # All the connected regions are associated to the same property (position). 
     labels = label(mask)
+ 
     
-    # Instance to measure properties of previously labelled regions.
-    props = regionprops(labels)
-    
-    # Extract the centroids of each labelled region.
-    mask_centroids = np.array([prop.centroid for prop in props])
+    if intensity_image is not None:
+        # Instance to measure properties of previously labelled regions.
+        props = regionprops(labels, intensity_image=intensity_image)
+        # Extract the centroids of each labelled region.
+        mask_centroids = np.array([prop.weighted_centroid for prop in props])
+    else:   
+        # Instance to measure properties of previously labelled regions.
+        props = regionprops(labels)
+        # Extract the centroids of each labelled region.
+        mask_centroids = np.array([prop.centroid for prop in props])
     
     return mask_centroids
 
-def plot_crops(crops_dataset, **kwargs):
+def plot_crops(
+    crops_dataset: np.ndarray,
+    **kwargs: dict
+) -> None:
     """Plots all crops in a dataset with shape (N, X, Y) as subplots.
 
     Ensures no more than 4 columns in the layout.
@@ -1144,9 +1206,7 @@ def plot_crops(crops_dataset, **kwargs):
     plt.show()
     
 
-
-
-def interactive_ruler(image):
+def interactive_ruler(image: np.ndarray) -> None:
     """
     Interactive function to draw lines on an image and calculate their lengths.
 
@@ -1183,7 +1243,7 @@ def interactive_ruler(image):
         ['red', 'blue', 'green', 'orange', 'purple', 'cyan', 'magenta', 'yellow']
         )
 
-    def onclick(event):
+    def onclick(event: matplotlib.backend_bases.MouseEvent) -> None:
         """
         Handle mouse click events to draw lines and calculate their lengths.
 
@@ -1212,7 +1272,7 @@ def interactive_ruler(image):
                     [x1, x2], [y1, y2], 
                     'o-', 
                     color=color, 
-                    label=f'Segment {len(line_lengths)}: {length:.1f} pixels'
+                    label=f'Segment {len(line_lengths)}: {length:.1f} pixels',
                     )
                 plt.draw()
 
@@ -1220,7 +1280,7 @@ def interactive_ruler(image):
                 ax.legend(
                     loc='upper right', 
                     bbox_to_anchor=(1.3, 1), 
-                    fontsize=10
+                    fontsize=10,
                     )
                 plt.draw()
 
@@ -1235,7 +1295,7 @@ def interactive_ruler(image):
         image, 
         cmap='gray', 
         #origin='lower', 
-        #extent=[0, image.shape[1], 0, image.shape[0]]
+        #extent=[0, image.shape[1], 0, image.shape[0]],
         )
     ax.set_title("Click on two points to draw a line on the image")
 
