@@ -183,7 +183,7 @@ def generate_centroids(
     
     # Handle the case of only one particle centered at the middle.
     if num_particles == 1:
-        angle = np.random.uniform(0.0, 2.0) * np.pi
+        angle = np.random.uniform(-1.0, 1.0) * np.pi
         particles = np.array([image_size // 2, image_size // 2, angle])       
         particles = np.array([particles])
             
@@ -243,13 +243,14 @@ def transform_to_video(
     background_props = background_props or {}
     
     # Initialize particle dictionaries.
-    _core_particle_dict = {} 
+    _core_particle_dict = {"upscale_factor": 1} 
     _shell_particle_dict = {}
     
     # Default background properties.
     _background_dict = {
-        "background_mean": 100,  # Mean background intensity.
-        "background_std": 50,  # Std. dev. of background noise.
+        "background_mean": 0,  # Mean background intensity.
+        "background_std": 0,  # Std. dev. of background noise.
+        "poisson_snr": 100,  # Signal-to-noise ratio for Poisson noise.
     }
 
     # Update the default dictionaries with user-defined properties.
@@ -275,6 +276,7 @@ def transform_to_video(
     trajectory_data = trajectory_data[np.newaxis, :]  # Add a new axis.
     trajectory_data = np.moveaxis(trajectory_data, 0, 1)  # Swap axis.
     
+
     # Generate inner particle
     inner_particle = dt.Ellipsoid(
         trajectories=trajectory_data,
@@ -284,40 +286,49 @@ def transform_to_video(
         number_of_particles=trajectory_data.shape[0],
         traj_length=trajectory_data.shape[1],
         position=lambda trajectory: trajectory[0],
-
         # Particle can be slightly out of plane of focus at random.
         z = lambda: 100 * np.random.uniform(-1.0, 1.0) * dt.units.nm,
-        #replicate_index=lambda _ID: _ID,
         angles_list=angles,
         rotation = lambda replicate_index, angles_list: angles_list[
             replicate_index],
         **_core_particle_dict,
-        )
+    )
 
-    # Generate outer particle (scaled radius and intensity).
-    outer_particle = dt.Ellipsoid(
-        trajectories=trajectory_data,
-        replicate_index=lambda _ID: _ID,
-        trajectory=lambda replicate_index, trajectories: dt.units.pixel
-        * trajectories[replicate_index[-1]],
-        number_of_particles=trajectory_data.shape[0],
-        traj_length=trajectory_data.shape[1],
-        position=lambda trajectory: trajectory[0],
-        z = inner_particle.z or 0,
-        rotation=inner_particle.rotation or 0,
-        **_shell_particle_dict,
-        )
 
     # Sequential definition of particles with changing positions per frame.
     sequential_inner_particle = dt.Sequential(
         inner_particle,
         position=lambda trajectory, sequence_step: trajectory[sequence_step],
+    )
+
+#   Check if shell particle properties are provided.
+    if shell_particle_props:
+        # Generate outer particle (scaled radius and intensity).
+        outer_particle = dt.Ellipsoid(
+            trajectories=trajectory_data,
+            replicate_index=lambda _ID: _ID,
+            trajectory=lambda replicate_index, trajectories: dt.units.pixel
+            * trajectories[replicate_index[-1]],
+            number_of_particles=trajectory_data.shape[0],
+            traj_length=trajectory_data.shape[1],
+            position=lambda trajectory: trajectory[0],
+            z = inner_particle.z or 0,
+            rotation=inner_particle.rotation or 0,
+            **_shell_particle_dict,
         )
 
-    sequential_outer_particle = dt.Sequential(
-        outer_particle,
-        position=lambda trajectory, sequence_step: trajectory[sequence_step],
+        sequential_outer_particle = dt.Sequential(
+            outer_particle,
+            position=lambda trajectory, sequence_step: trajectory[sequence_step],
         )
+
+        combined_particle = (
+            sequential_inner_particle 
+            >> sequential_outer_particle
+        )  
+    else:
+        combined_particle = sequential_inner_particle
+
 
     # Define background intensity variation over time.
     background = dt.Add(value=_background_dict["background_mean"])
@@ -351,34 +362,31 @@ def transform_to_video(
     sequential_background = dt.Sequential(
         background,
         value=background_variation,
-        )
+    )
 
     # Define optical setup (e.g., Fluorescence).
     #optics = dt.Darkfield(**_optics_dict)
     optics = optics_props
 
-    # Compute scale factor for optics normalization.
-    scale_factor = (
-        (
-            optics.magnification() * optics.wavelength()
-            / (optics.NA() * optics.resolution())
-            ) ** 2
-        ) * (1 / np.pi)
+    # # Compute scale factor for optics normalization.
+    # scale_factor = (
+    #     optics.magnification() * optics.wavelength()
+    #     / (optics.NA() * optics.resolution())
+    #     ) ** 2 * (1 / np.pi)
     
     # Create the sample to render: combine particles, background, and optics.
     sample = (
-        optics(
-            (sequential_inner_particle >> sequential_outer_particle)
+        dt.Upscale(optics(
+            combined_particle
             ^ sequential_inner_particle.number_of_particles
-            )
-        >> dt.Divide(scale_factor)
+            ), factor=_core_particle_dict["upscale_factor"])
+        >> dt.NormalizeMinMax()
+        >> dt.Poisson(snr=_background_dict["poisson_snr"])
         >> sequential_background
-        >> dt.Gaussian(0.0, 0.05)
-        >> dt.NormalizeMinMax(0.0, 1.0)
-        )
+        >> dt.NormalizeMinMax()
+    )
 
-    if len(trajectory_data.shape) > 1:
-
+    if trajectory_data.shape[0] >= 1:
         # Sequentially update and resolve the sample to produce video frames.
         sequential_sample = dt.Sequence(
             sample,
@@ -391,7 +399,7 @@ def transform_to_video(
     else:
         _video = sample.update().resolve()
     
-    return _video.__abs__() # Ensure real-valued field.
+    return _video#.__abs__() # Ensure real-valued field.
 
 
 def create_ground_truth_map(
@@ -441,8 +449,8 @@ def create_ground_truth_map(
     sigma_y = sigma[1] if len(sigma) == 2 else sigma[0]
     
     # Creates a grid of x and y coordinates corresponding to pixel positions in
-    # the image. This grid will be used to compute the Gaussian ground truth map
-    # associated to each particle.
+    # the image. This grid will be used to compute the Gaussian ground truth 
+    # map associated to each particle.
     x = np.linspace(0, image_size - 1, image_size)
     y = np.linspace(0, image_size - 1, image_size)
     X, Y = np.meshgrid(x, y)
@@ -498,6 +506,8 @@ def generate_particle_dataset(
     shell_particle_dict: dict = None,
     optics_properties: dict = None,
     pixel_size_nm: float = 100,
+    background_props: dict = None,
+
 ) -> tuple:
     """Generates a dataset of simulated particle images and their corresponding
     ground truth maps with non-overlapping particle positions.
@@ -519,6 +529,8 @@ def generate_particle_dataset(
     pixel_size_nm: float
         The size of each pixel in nanometers. Default is 100 nm. Set it to None
         if pixel size is not applicable.
+    background_props: dict
+        Background properties for the simulation.
 
     Returns
     -------
@@ -550,11 +562,10 @@ def generate_particle_dataset(
         if np.remainder(i + 1, 10):
             print(f"\rGenerating sample {i + 1}/{num_samples}", end="")
 
-        # Generate a random particle number.
-        randomized_num_particles = np.random.randint(0, max_num_particles)
-        # For some reason randint(1,1) complains, so we handle the 0 case.
-        if randomized_num_particles == 0:
-            randomized_num_particles = 1
+        # Generate a random particle number > 0.
+        randomized_num_particles = max(
+            1, np.random.randint(0, max_num_particles)
+        )
         
          # Extract radius from dictionary.
         particle_radius = core_particle_dict["radius"]
@@ -615,6 +626,7 @@ def generate_particle_dataset(
             shell_particle_props=shell_particle_dict,
             optics_props=optics_properties,
             image_size=image_size,
+            background_props=background_props,
         )
         
         # Store the generated image and ground truth map.
@@ -766,14 +778,13 @@ def plot_image_mask_ground_truth_map(**kwargs: dict) -> None:
             Mask of the image produced by thresholding.
 
         ground_truth_map: 2D array-like, optional.
-            2D ground truth map. Gaussians centered at the ground truth position
-            of particles.
+            2D ground truth map. Gaussians centered at the ground truth 
+            position of particles.
 
     Returns
     -------
 
     None
-        The function displays the plot directly.
         The function directly plots the image side-by-side with its mask and
         ground truth map.
 
@@ -972,16 +983,19 @@ def normalize_min_max(
     max_intensity = np.max(image_array)
 
     if max_intensity == min_intensity or max_intensity < min_intensity:
-        raise ValueError("Cannot normalize array. Check maximum and minimum values.")
+        raise ValueError("Cannot normalize array. \
+            Check maximum and minimum values.")
 
     # Perform min-max normalization.
-    normalized_image_array = (image_array - min_intensity) / (max_intensity - min_intensity)
+    normalized_image_array = (
+        (image_array - min_intensity) / (max_intensity - min_intensity)
+    )
 
     # Rescale to minimum and maximum values.
     normalized_image_array = (
         (maximum_value - minimum_value) * normalized_image_array 
         + minimum_value
-        )
+    )
     
     return normalized_image_array
 
@@ -1239,9 +1253,10 @@ def interactive_ruler(image: np.ndarray) -> None:
     line_lengths = []
 
     # Define a color cycle list for the lines to be drawn.
-    colors = cycle(
-        ['red', 'blue', 'green', 'orange', 'purple', 'cyan', 'magenta', 'yellow']
-        )
+    colors = cycle([
+        'red', 'blue', 'green', 'orange', 
+        'purple', 'cyan', 'magenta', 'yellow'
+    ])
 
     def onclick(event: matplotlib.backend_bases.MouseEvent) -> None:
         """
