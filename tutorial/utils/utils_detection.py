@@ -287,7 +287,7 @@ def transform_to_video(
         traj_length=trajectory_data.shape[1],
         position=lambda trajectory: trajectory[0],
         # Particle can be slightly out of plane of focus at random.
-        z = lambda: 100 * np.random.uniform(-1.0, 1.0) * dt.units.nm,
+        z = 0,#lambda: 100 * np.random.uniform(-1.0, 1.0) * dt.units.nm,
         angles_list=angles,
         rotation = lambda replicate_index, angles_list: angles_list[
             replicate_index],
