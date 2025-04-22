@@ -76,6 +76,7 @@ Methods:
 # =============================================================================
 
 """
+
 from __future__ import annotations
 import math # Mathematical operations
 import random  # Generate random numbers.
@@ -287,7 +288,7 @@ def transform_to_video(
         traj_length=trajectory_data.shape[1],
         position=lambda trajectory: trajectory[0],
         # Particle can be slightly out of plane of focus at random.
-        z = 0,#lambda: 100 * np.random.uniform(-1.0, 1.0) * dt.units.nm,
+        z = 0 * dt.units.nm,
         angles_list=angles,
         rotation = lambda replicate_index, angles_list: angles_list[
             replicate_index],
@@ -365,7 +366,6 @@ def transform_to_video(
     )
 
     # Define optical setup (e.g., Fluorescence).
-    #optics = dt.Darkfield(**_optics_dict)
     optics = optics_props
 
     # # Compute scale factor for optics normalization.
@@ -433,6 +433,7 @@ def create_ground_truth_map(
         The resulting 2D intensity map.
 
     """
+
     # Initialize the empty ground truth map.
     ground_truth_map = np.zeros((image_size, image_size))
 
@@ -505,11 +506,12 @@ def generate_particle_dataset(
     core_particle_dict: dict,
     shell_particle_dict: dict = None,
     optics_properties: dict = None,
-    pixel_size_nm: float = 100,
     background_props: dict = None,
-
+    pixel_size_nm: float = 100,
 ) -> tuple:
-    """Generates a dataset of simulated particle images and their corresponding
+    """Simulate particles.
+    
+    Generates a dataset of simulated particle images and their corresponding
     ground truth maps with non-overlapping particle positions.
 
     Parameters
@@ -542,6 +544,7 @@ def generate_particle_dataset(
         the corresponding ground truth maps.
 
     """
+
     # Preallocate arrays to store all images and ground truth maps.
     images = np.empty(
         (num_samples, image_size, image_size, 1), 
@@ -670,17 +673,9 @@ def plot_predicted_positions(**kwargs: dict) -> None:
     - If both predicted_positions and ground_truth_positions are provided,
     they will be compared visually on the same image.
     - The coordinates for both predicted_positions and ground_truth_positions
-    are assumed to be in (X, Y) format but will be swapped to (Y, X) for
+    are assumed to be in (x, y) format but will be swapped to (y, x) for
     plotting since matplotlib addresses the vertical axis first
     when using imshow.
-
-    Examples:
-    --------
-    >>> plot_predicted_positions(image=img_array,
-    ...                             predicted_positions=pred_array,
-    ...                             ground_truth_positions=gt_array,
-    ...                             title="Particle Localization")
-
 
     """
 
@@ -797,13 +792,6 @@ def plot_image_mask_ground_truth_map(**kwargs: dict) -> None:
     but will be swapped to (Y, X) for plotting since matplotlib addresses
     the vertical axis first when using `imshow`.
 
-    Example Usage:
-    --------------
-    >>> plot_image_mask_ground_truth_map(image=img_array,
-    ...                             mask=mask_array,
-    ...                             ground_truth_map=map_array,
-    ...                             title="Image of experiment")
-
     """
 
     # Retrieves the image, the mask (optional), the ground truth map (optional)
@@ -859,8 +847,13 @@ def evaluate_locs(
     distance_th: float = 5,
     pixel_size_nm: float = 100,
 ) -> tuple:
-    """Evaluate predicted positions against true positions using a distance 
-    threshold.
+    """Evaluate metrics.
+    
+    This function evaluates predicted positions against ground-truth positions. 
+    It calculates several metrics for performance, including true positives, 
+    false positives, false negatives, F1 score, and RMS-error. The function 
+    uses the Hungarian algorithm to find the best match for each predicted 
+    position. The evaluation is done by using a distance threshold. 
 
     Parameters
     ----------
@@ -943,8 +936,10 @@ def normalize_min_max(
     minimum_value: float = 0.0, 
     maximum_value: float = 1.0,
 ) -> np.ndarray:
-    """Normalizes an array using min-max normalization to scale values
-    between 0 and 1. Optionally squeezes the array to 2D if it has a
+    """ Array normalization.
+    
+    This function normalizes an array using min-max normalization to scale 
+    values between 0 and 1. Optionally, it squeezes the array to 2D if it has a
     single color channel.
 
     Parameters
@@ -973,7 +968,9 @@ def normalize_min_max(
     ------
     ValueError
         If the normalization range is zero (max == min).
+
     """
+
     # Eliminates an extra dimension if specified.
     if squeeze_in_2D:
         image_array = np.squeeze(image_array)
@@ -1001,8 +998,10 @@ def normalize_min_max(
 
 
 def pad_to_square(image: np.ndarray) -> np.ndarray:
-    """Pads any image to a squared size LxL, with L being the lowest power of 2 
-    greater or equal to the largest side of the image.
+    """Image padding to an LxL square.
+    
+    This function pads an image to a square with size LxL, with L being the 
+    smallest power of 2 greater or equal to the largest side of the image.
 
     Parameters
     ----------
@@ -1015,6 +1014,7 @@ def pad_to_square(image: np.ndarray) -> np.ndarray:
         Padded image.
 
     """
+
     import math
     
     # Extract the dimensions.
@@ -1045,9 +1045,11 @@ def locate_particle_centers(
     estimated_radius: int,
     pixel_size_nm: float=100,
 ) -> np.ndarray:
-    """Locates the center of particles in an image by calculating the center
-    of a region of interest (ROI) around each predicted position exploiting
-    radial symmetry.
+    """Particle centroid localization.
+    
+    This function locates the centroid of particles in an image by calculating 
+    the center of a region of interest (ROI) around each predicted position 
+    exploiting radial symmetry.
 
     Parameters
     ----------
@@ -1106,6 +1108,14 @@ def mask_to_positions(
     intensity_image: np.ndarray=None,
 ) -> np.ndarray:
     """Converts a mask to a list of positions.
+
+    This function takes a binary mask and converts it into a list of
+    coordinates representing the center of particles. The function can also
+    use an intensity image to calculate the weighted centroid of the particles
+    if provided. The mask should be a 2D array where non-zero values indicate
+    the presence of particles. The function uses the `skimage.measure` module
+    to label the connected components in the mask and then calculates the
+    centroids of these components. The centroids are returned as a 2D array
     
     Parameters
     ----------
@@ -1154,10 +1164,14 @@ def plot_crops(
     crops_dataset: np.ndarray,
     **kwargs: dict
 ) -> None:
-    """Plots all crops in a dataset with shape (N, X, Y) as subplots.
+    """Plot crops.
 
-    Ensures no more than 4 columns in the layout.
-
+    This function plots crops from a dataset in a grid layout. The crops are
+    displayed as subplots, with a maximum of 4 columns. The function takes a
+    3D array of shape (N, X, Y) as input, where N is the number of crops and
+    X and Y are the dimensions of each crop. The function also accepts an
+    optional title for the plot.
+    
     Parameters
     ----------
     crops_dataset: np.ndarray
@@ -1173,6 +1187,7 @@ def plot_crops(
     None
 
     """
+
     # Extract the number of crops (N) from the dataset.
     number_of_crops = crops_dataset.shape[0]
 
@@ -1221,30 +1236,18 @@ def plot_crops(
     
 
 def interactive_ruler(image: np.ndarray) -> None:
-    """
-    Interactive function to draw lines on an image and calculate their lengths.
+    """Draw lines on an image and calculate their lengths.
 
-    This function displays an image as a background and allows the user to draw 
-        lines by clicking on two points. Each line is drawn in a unique color, 
-        and its length is displayed in a legend.
+    This function allows the user to interactively draw lines on an image by
+    clicking two points. The length of the drawn line is calculated and
+    displayed on the plot. Each line is drawn in a different color, and the 
+    legend shows the lengths of all lines drawn so far.
 
     Parameters
     ----------
         image (numpy.ndarray): A 2D numpy array representing the image 
             (intensity map).
 
-    Example
-    -------
-        To use this function with a random image:
-        >>> image = np.random.rand(100, 100)
-        >>> interactive_line_plot(image)
-
-        To use this function with a real image:
-        >>> from matplotlib.image import imread
-        >>> image = imread('path_to_your_image.png')
-        >>> if image.ndim == 3:  # Convert RGB to grayscale
-        ...     image = np.mean(image, axis=2)
-        >>> interactive_line_plot(image)
     """
     
     # Initialize empty lists to store the coordinates of the lines and their 
@@ -1259,9 +1262,15 @@ def interactive_ruler(image: np.ndarray) -> None:
     ])
 
     def onclick(event: matplotlib.backend_bases.MouseEvent) -> None:
-        """
-        Handle mouse click events to draw lines and calculate their lengths.
-
+        """ Handle mouse click events to draw lines and calculate lengths.
+        
+        This function is called when the user clicks on the image. It stores
+        the coordinates of the clicked points and draws a line between them.
+        The length of the line is calculated and displayed in the legend.
+        The legend is updated with the lengths of all lines drawn so far.
+        If two points have been clicked, the line is drawn and the length is
+        calculated. The coordinates are cleared for the next line.
+        
         Parameters
         ----------
             event (matplotlib.backend_bases.MouseEvent): The mouse click event.
