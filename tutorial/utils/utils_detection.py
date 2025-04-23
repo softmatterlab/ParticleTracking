@@ -241,12 +241,14 @@ def transform_to_video(
     # Initialize defaults if not provided.
     core_particle_props = core_particle_props or {}
     shell_particle_props = shell_particle_props or {}
-    background_props = background_props or {}
-    
-    # Initialize particle dictionaries.
-    _core_particle_dict = {"upscale_factor": 1} 
+    background_props = background_props or {}    
+
+     # Initialize particle dictionaries.
+    _core_particle_dict = {
+        "upscale_factor": 1,
+    }
     _shell_particle_dict = {}
-    
+
     # Default background properties.
     _background_dict = {
         "background_mean": 0,  # Mean background intensity.
@@ -258,6 +260,7 @@ def transform_to_video(
     _core_particle_dict.update(core_particle_props)
     _shell_particle_dict.update(shell_particle_props)
     _background_dict.update(background_props)
+
     
     # Check if trajectory data has 3 axis (X, Y, angle).
     if trajectory_data.shape[1] == 3:
@@ -273,12 +276,12 @@ def transform_to_video(
         angles = np.zeros([len(trajectory_data), 1])
 
     # Reshape trajectory data to fit expected input format.
-    # The desired format is (N, 1, dim), with dim the spatial dimensions.
-    trajectory_data = trajectory_data[np.newaxis, :]  # Add a new axis.
+    # The desired format is (N, frames, dim), with dim the spatial dimensions.
+    if len(trajectory_data.shape) == 2:
+        trajectory_data = trajectory_data[np.newaxis, :]  # Add a new axis.
     trajectory_data = np.moveaxis(trajectory_data, 0, 1)  # Swap axis.
     
-
-    # Generate inner particle
+    # Generate inner particle (core).
     inner_particle = dt.Ellipsoid(
         trajectories=trajectory_data,
         replicate_index=lambda _ID: _ID,
@@ -287,14 +290,11 @@ def transform_to_video(
         number_of_particles=trajectory_data.shape[0],
         traj_length=trajectory_data.shape[1],
         position=lambda trajectory: trajectory[0],
-        # Particle can be slightly out of plane of focus at random.
-        z = 0 * dt.units.nm,
         angles_list=angles,
         rotation = lambda replicate_index, angles_list: angles_list[
             replicate_index],
         **_core_particle_dict,
     )
-
 
     # Sequential definition of particles with changing positions per frame.
     sequential_inner_particle = dt.Sequential(
@@ -1270,7 +1270,7 @@ def interactive_ruler(image: np.ndarray) -> None:
         The legend is updated with the lengths of all lines drawn so far.
         If two points have been clicked, the line is drawn and the length is
         calculated. The coordinates are cleared for the next line.
-        
+
         Parameters
         ----------
             event (matplotlib.backend_bases.MouseEvent): The mouse click event.
