@@ -19,9 +19,9 @@ We show how to generate synthetic data with `DeepTrack2` in order to train the D
 
 1.  Download the repository or clone it directly by typing  ```git clone https://github.com/aarondomenzain/tracking-softmatter-aarond.git``` in a terminal. 
 
-2. Ensure you are using ``Python version 3.9-3.12``.
+2. Ensure you are using ``Python version 3.9-3.12``. 
    
-3. Install the required packages with the following command: ```pip install deeptrack deeplay imageio ipykernel ipywidgets laptrack matplotlib numpy opencv-python scikit-image scipy torch trackpy```
+3. Install the required packages with the following command: ```pip install deeptrack deeplay imageio ipympl ipykernel ipywidgets laptrack matplotlib numpy opencv-python scikit-image scipy torch trackpy```
 
 
 ### **Detection**
