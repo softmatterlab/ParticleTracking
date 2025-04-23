@@ -332,7 +332,7 @@ def transform_to_video(
 
 
     # Define background intensity variation over time.
-    background = dt.Add(value=_background_dict["background_mean"])
+    background = dt.Add(0)#value=_background_dict["background_mean"])
 
 
     def background_variation(
@@ -380,10 +380,10 @@ def transform_to_video(
             combined_particle
             ^ sequential_inner_particle.number_of_particles
             ), factor=_core_particle_dict["upscale_factor"])
-        >> dt.NormalizeMinMax()
+        >> dt.Background(_background_dict["background_mean"])
         >> dt.Poisson(snr=_background_dict["poisson_snr"])
         >> sequential_background
-        >> dt.NormalizeMinMax()
+        # >> dt.NormalizeMinMax()
     )
 
     if trajectory_data.shape[0] >= 1:
@@ -542,7 +542,7 @@ def generate_particle_dataset(
     maps: np.ndarray
         Array of shape (num_samples, image_size, image_size, 1) containing
         the corresponding ground truth maps.
-
+ 
     """
 
     # Preallocate arrays to store all images and ground truth maps.
@@ -818,12 +818,12 @@ def plot_image_mask_ground_truth_map(**kwargs: dict) -> None:
     if image is not None:
         axes[count].imshow(image, cmap="gray")
         if title is not None:
-            axes[count].set_title("Image of particles")
+            axes[count].set_title("Image of Particles")
         count += 1
 
     if ground_truth_map is not None:
         axes[count].imshow(ground_truth_map, cmap="gray")
-        axes[count].set_title("Ground truth map")
+        axes[count].set_title("Ground-Truth Map")
         count += 1
 
     if mask is not None:
@@ -1039,68 +1039,68 @@ def pad_to_square(image: np.ndarray) -> np.ndarray:
     return padded_image
 
 
-def locate_particle_centers(
-    predicted_positions: list or tuple,
-    simulated_image: np.ndarray,
-    estimated_radius: int,
-    pixel_size_nm: float=100,
-) -> np.ndarray:
-    """Particle centroid localization.
+# def locate_particle_centers(
+#     predicted_positions: list or tuple,
+#     simulated_image: np.ndarray,
+#     estimated_radius: int,
+#     pixel_size_nm: float=100,
+# ) -> np.ndarray:
+#     """Particle centroid localization.
     
-    This function locates the centroid of particles in an image by calculating 
-    the center of a region of interest (ROI) around each predicted position 
-    exploiting radial symmetry.
+#     This function locates the centroid of particles in an image by calculating 
+#     the center of a region of interest (ROI) around each predicted position 
+#     exploiting radial symmetry.
 
-    Parameters
-    ----------
-    predicted_positions: list or tuple 
-        list or tuple of (x, y) coordinates for predicted positions.
+#     Parameters
+#     ----------
+#     predicted_positions: list or tuple 
+#         list or tuple of (x, y) coordinates for predicted positions.
 
-    simulated_image: np.ndarray
-        Image array in which particles are located.
+#     simulated_image: np.ndarray
+#         Image array in which particles are located.
 
-    estimated_radius: int
-        Estimated radius of the particles in pixels.
-        This is used to define the size of the ROI.
+#     estimated_radius: int
+#         Estimated radius of the particles in pixels.
+#         This is used to define the size of the ROI.
 
-    pixel_size_nm: float, optional
-        The size of each pixel in nanometers. Default is 100 nm. Set it to None
-        if pixel size is not applicable.
+#     pixel_size_nm: float, optional
+#         The size of each pixel in nanometers. Default is 100 nm. Set it to None
+#         if pixel size is not applicable.
 
-    Returns
-    -------
-    np.ndarray
-        Array of corrected particle positions.
+#     Returns
+#     -------
+#     np.ndarray
+#         Array of corrected particle positions.
 
-    """
+#     """
     
-    if pixel_size_nm is not None:
-        # Convert distance threshold to pixel units.
-        estimated_radius /= pixel_size_nm
+#     if pixel_size_nm is not None:
+#         # Convert distance threshold to pixel units.
+#         estimated_radius /= pixel_size_nm
      
-    corrected_positions = []
+#     corrected_positions = []
 
-    for x, y in predicted_positions:
+#     for x, y in predicted_positions:
 
-        # Calculate bounds for the region of interest (ROI).
-        x_start = int(max(0, np.floor(x) - estimated_radius // 2))
-        x_end = int(min(np.floor(x)
-        + estimated_radius // 2, simulated_image.shape[0]))
+#         # Calculate bounds for the region of interest (ROI).
+#         x_start = int(max(0, np.floor(x) - estimated_radius // 2))
+#         x_end = int(min(np.floor(x)
+#         + estimated_radius // 2, simulated_image.shape[0]))
 
-        y_start = int(max(0, np.floor(y) - estimated_radius // 2))
-        y_end = int(min(np.floor(y)
-        + estimated_radius // 2, simulated_image.shape[1]))
+#         y_start = int(max(0, np.floor(y) - estimated_radius // 2))
+#         y_end = int(min(np.floor(y)
+#         + estimated_radius // 2, simulated_image.shape[1]))
 
-        # Extract the ROI from the image.
-        roi = simulated_image[x_start:x_end, y_start:y_end]
+#         # Extract the ROI from the image.
+#         roi = simulated_image[x_start:x_end, y_start:y_end]
 
-        # Compute the center of the ROI.
-        xc, yc = rc(roi, invert_xy=True)
+#         # Compute the center of the ROI.
+#         xc, yc = rc(roi, invert_xy=True)
 
-        # Append the corrected position.
-        corrected_positions.append([x_start + xc, y_start + yc])
+#         # Append the corrected position.
+#         corrected_positions.append([x_start + xc, y_start + yc])
 
-    return np.array(corrected_positions)
+#     return np.array(corrected_positions)
 
 
 def mask_to_positions(
