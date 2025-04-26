@@ -100,96 +100,174 @@ import trackpy as tp  # Particle tracking package. Crocker & Grier method.
 def generate_centroids(
     num_particles: int, 
     image_size: int, 
-    particle_radius: int,
+    particle_radius: int = None,
     pixel_size_nm: float = 100,
+    max_attempts: int = 1000,
 ) -> np.ndarray:
-    """Generates non-overlapping particle positions in a 2D image. 
+    """Generate non-overlapping particle 
     
-    Uses random number generation. Attempts to place particles at random, 
-    avoiding overlapping centers by setting a minimum separation distance 
-    equal to a specified particle radius.
+    This function generates non-overlapping particle centroids with random 
+    orientations in a 2D image.
 
     Parameters
     ----------
-    image_size: int
-        The width and height of the square image in pixels.
-    num_particles: int
-        The number of particles to place in the image.
-    particle_radius: int
-        The radius of each particle in pixels.
-    pixel_size_nm: float, optional
-        The size of each pixel in nanometers. Default is 100 nm. Set it to None
-        for pixel units.
+    num_particles : int
+        Number of particles to place.
+    image_size : int
+        Width and height of the (square) image in pixels.
+    particle_radius : float, optional
+        Radius of each particle. If given in nanometers, pixel_size_nm
+        will convert to pixel units; if None, no overlap constraint.
+    pixel_size_nm : float, optional
+        Size of one pixel in nanometers. Ignored if particle_radius is None.
 
     Returns
     -------
     np.ndarray
-        An array of shape (num_particles, 3), where each row contains the
-        (x, y, theta) coordinates of a particle's center and orientation angle.
+        Array of shape (M, 3) with rows [x, y, theta], where M <= num_particles.
+        Theta is sampled uniformly in [-pi, pi].
 
     """
-    # Pre-allocate an array to store the position of particles.
-    particles = []
+    # Convert radius from nm to pixels if needed
+    if particle_radius is not None and pixel_size_nm is not None:
+        particle_radius = particle_radius / pixel_size_nm
 
-    #
-    if pixel_size_nm is not None:
-        particle_radius /= pixel_size_nm
+    # Margin ensures particles stay fully inside image
+    margin = float(particle_radius) if particle_radius is not None else 0.0
+    min_distance = 2 * margin if particle_radius is not None else 0.0
 
-    # Condition of no overlap according to hard spheres.
-    min_distance = 2 * particle_radius
+    # Sample positions
+    if particle_radius is None:
+        # No-overlap: simple uniform sampling
+        positions = np.random.uniform(
+            low=margin,
+            high=image_size - margin,
+            size=(num_particles, 2)
+        )
+    else:
+        # Rejection sampling with minimum distance
+        placed = []
+        attempts = 0
+        while len(placed) < num_particles and attempts < max_attempts:
+            candidate = np.random.uniform(
+                low=margin,
+                high=image_size - margin,
+                size=2
+            )
+            if all(np.linalg.norm(candidate - p) >= min_distance for p in placed):
+                placed.append(candidate)
+            attempts += 1
 
-    # Maximum attempts to place particle without overlap.
-    max_attempts = 1000
+        if not placed:
+            # Return empty array if placement failed completely
+            return np.empty((0, 3))
 
-    # Set an attempt counter to zero.
-    attempts = 0
+        positions = np.vstack(placed)
+
+    # Sample random orientation angles in [-pi, pi]
+    thetas = np.random.uniform(-np.pi, np.pi, size=(positions.shape[0], 1))
+
+    # Combine into final array
+    centroids = np.hstack((positions, thetas))
+    return centroids
+
+# def generate_centroids(
+#     num_particles: int, 
+#     image_size: int, 
+#     particle_radius: int = None,
+#     pixel_size_nm: float = 100,
+# ) -> np.ndarray:
+#     """Generates non-overlapping particle positions in a 2D image. 
+    
+#     Uses random number generation. Attempts to place particles at random, 
+#     avoiding overlapping centers by setting a minimum separation distance 
+#     equal to a specified particle radius.
+
+#     Parameters
+#     ----------
+#     image_size: int
+#         The width and height of the square image in pixels.
+#     num_particles: int
+#         The number of particles to place in the image.
+#     particle_radius: int
+#         The radius of each particle in pixels.
+#     pixel_size_nm: float, optional
+#         The size of each pixel in nanometers. Default is 100 nm. Set it to None
+#         for pixel units.
+
+#     Returns
+#     -------
+#     np.ndarray
+#         An array of shape (num_particles, 3), where each row contains the
+#         (x, y, theta) coordinates of a particle's center and orientation angle.
+
+#     """
+#     # Pre-allocate an array to store the position of particles.
+#     particles = []
+
+#     #
+#     if pixel_size_nm is not None:
+#         particle_radius /= pixel_size_nm
+
+#     # Condition of no overlap according to hard spheres.
+#     min_distance = 2 * particle_radius
+
+#     # Maximum attempts to place particle without overlap.
+#     max_attempts = 1000
+
+#     # Set an attempt counter to zero.
+#     attempts = 0
         
-    # Start adding particles while keeping a separation distance.    
-    while len(particles) < num_particles and attempts < max_attempts:
-
-        # Randomly generate a new particle position within the valid range
-        x = np.random.uniform(particle_radius, image_size - particle_radius)
-        y = np.random.uniform(particle_radius, image_size - particle_radius)
-        new_particle = np.array([x, y])
-
-        # Check if this new particle overlaps with any existing particles
-        if all(
-            np.linalg.norm(new_particle - p) >= min_distance for p in particles
-        ):
-            particles.append(new_particle)
-
-        attempts += 1
-
-        # If the number of attempts has reached its maximum, decrese the number
-        # of particles by 1 and reset the attempt counter to start again.
-        if attempts == max_attempts:
-            num_particles += -1
-            attempts = 0
-            """
-            print(f"Simulation of {num_particles} particles with"
-             "image size {image_size}x{image_size} did not converge")
-            print("Number of particles target decreased by 1")
-            print("Attempts counter reset to 0")
-            """
+#     # Start adding particles while keeping a separation distance.    
     
-    # Assign an angle orientation after all particles have been created.
-    # Create a third column with randomized angles.
-    angle_column = np.random.uniform(-1.0, 1.0, len(particles)) * np.pi
+#     # if particle_radius is None:
+#     #     x = np.random.uniform(particle_radius, image_size - particle_radius)
+#     #     y = np.random.uniform(particle_radius, image_size - particle_radius)
+#     # else:
+#     while len(particles) < num_particles and attempts < max_attempts:
 
-    # Reshape z_column to be 2D.
-    angle_column = angle_column.reshape(-1, 1)
+#         # Randomly generate a new particle position within the valid range
+#         x = np.random.uniform(particle_radius, image_size - particle_radius)
+#         y = np.random.uniform(particle_radius, image_size - particle_radius)
+#         new_particle = np.array([x, y])
 
-    # Append the Z column to the pos_array.
-    particles = np.hstack((particles, angle_column))
+#         # Check if this new particle overlaps with any existing particles
+#         if all(
+#             np.linalg.norm(new_particle - p) >= min_distance for p in particles
+#         ):
+#             particles.append(new_particle)
+
+#         attempts += 1
+
+#         # If the number of attempts has reached its maximum, decrese the number
+#         # of particles by 1 and reset the attempt counter to start again.
+#         if attempts == max_attempts:
+#             num_particles += -1
+#             attempts = 0
+#             """
+#             print(f"Simulation of {num_particles} particles with"
+#             "image size {image_size}x{image_size} did not converge")
+#             print("Number of particles target decreased by 1")
+#             print("Attempts counter reset to 0")
+#             """
     
-    # Handle the case of only one particle centered at the middle.
-    if num_particles == 1:
-        angle = np.random.uniform(-1.0, 1.0) * np.pi
-        particles = np.array([image_size // 2, image_size // 2, angle])       
-        particles = np.array([particles])
+#     # Assign an angle orientation after all particles have been created.
+#     # Create a third column with randomized angles.
+#     angle_column = np.random.uniform(-1.0, 1.0, len(particles)) * np.pi
+
+#     # Reshape z_column to be 2D.
+#     angle_column = angle_column.reshape(-1, 1)
+
+#     # Append the Z column to the pos_array.
+#     particles = np.hstack((particles, angle_column))
+    
+#     # Handle the case of only one particle centered at the middle.
+#     if num_particles == 1:
+#         angle = np.random.uniform(-1.0, 1.0) * np.pi
+#         particles = np.array([image_size // 2, image_size // 2, angle])       
+#         particles = np.array([particles])
             
-    return np.array(particles)
-
+#     return np.array(particles)
 
 def transform_to_video(
     trajectory_data: np.ndarray,
@@ -261,26 +339,30 @@ def transform_to_video(
     _shell_particle_dict.update(shell_particle_props)
     _background_dict.update(background_props)
 
-    
-    # Check if trajectory data has 3 axis (X, Y, angle).
-    if trajectory_data.shape[1] == 3:
-
-        # Extract the orientation angle from the third column.
-        angles = - trajectory_data[:, 2]
-        #angles = np.ones([len(trajectory_data), 1])
-
-        # Chop the third axis to extract only (X,Y) positions.
-        trajectory_data = trajectory_data[:, :2]
-        
-    else:
-        angles = np.zeros([len(trajectory_data), 1])
-
     # Reshape trajectory data to fit expected input format.
-    # The desired format is (N, frames, dim), with dim the spatial dimensions.
+    # Add third axis (frame) if not present. 
     if len(trajectory_data.shape) == 2:
         trajectory_data = trajectory_data[np.newaxis, :]  # Add a new axis.
+    
+    print(trajectory_data.shape)
+
+    # Check if trajectory data has 3 axis (X, Y, angle).
+    if trajectory_data.shape[-1] == 3:
+
+        # Extract the orientation angle from the third column.
+        angles = - trajectory_data[-1][:, 2]
+
+        # Chop the third axis to extract only (X,Y) positions.
+        trajectory_data[-1][...] = trajectory_data[-1][:, :2]
+    else:
+        angles = np.zeros([trajectory_data[-1].shape[0], 1])
+    print(angles.shape)
+
+    # The desired format is (N, frames, dim), with dim the spatial dimensions.
     trajectory_data = np.moveaxis(trajectory_data, 0, 1)  # Swap axis.
     
+    print(trajectory_data.shape)
+
     # Generate inner particle (core).
     inner_particle = dt.Ellipsoid(
         trajectories=trajectory_data,
@@ -385,8 +467,10 @@ def transform_to_video(
         >> sequential_background
         # >> dt.NormalizeMinMax()
     )
+    print(trajectory_data.shape[1])
+    print(inner_particle.traj_length())
 
-    if trajectory_data.shape[0] >= 1:
+    if trajectory_data.shape[1] > 1:
         # Sequentially update and resolve the sample to produce video frames.
         sequential_sample = dt.Sequence(
             sample,
@@ -1329,3 +1413,69 @@ def interactive_ruler(image: np.ndarray) -> None:
     # Show the plot
     plt.tight_layout()  # Adjust layout to prevent legend from overlapping.
     plt.show()
+
+def simulate_Brownian_trajs(
+    num_particles: int,
+    num_timesteps: int,
+    box_size: float,
+    diffusion_std: float = 1.0,
+) -> np.ndarray:
+    """
+    Simulate 2D Brownian motion trajectories in a periodic square box.
+
+    Parameters
+    ----------
+    num_particles : int
+        Number of particles to simulate.
+    num_timesteps : int
+        Number of time steps (including t=0).
+    box_size : float
+        Side length of the square simulation box. Positions wrap modulo box_size.
+    particle_radius: float, default=None
+
+    diffusion_std : float, default=1.0
+        Standard deviation of displacement per time step.
+
+    pixel_size_nm: float, default=100
+
+    Returns
+    -------
+    np.ndarray
+        Trajectories array of shape (num_timesteps, num_particles, 3).
+        Each entry [t, i] = [x, y, t], where x,y are positions in [0, box_size).
+    """
+    # Initial positions: uniform in [0, box_size)
+    # Reuse generate_centroids for even distribution (ignoring orientation)
+    centroids = generate_centroids(
+        num_particles=num_particles,
+        image_size=int(box_size),
+        particle_radius = None,
+    )
+    # Extract x,y and ignore theta
+    initial_pos = centroids[:, :2]  # shape (num_particles, 2)
+
+    # Preallocate output: (T, N, 3)
+    trajs = np.zeros((num_timesteps, num_particles, 3), dtype=float)
+    # Set initial frame
+    trajs[0, :, :2] = initial_pos
+    trajs[0, :, 2] = 0
+
+    # Generate all random increments at once
+    increments = np.random.normal(
+        loc=0.0,
+        scale=diffusion_std,
+        size=(num_timesteps - 1, num_particles, 2)
+    )
+
+    # Cumulative sum of increments + initial positions, modulo box_size
+    # Shape after cumsum: (T-1, N, 2)
+    cum_disp = np.cumsum(increments, axis=0)
+    # Broadcast initial positions and wrap
+    positions = (cum_disp + initial_pos[np.newaxis, :, :]) % box_size
+
+    # Fill trajectories for t=1..T-1
+    trajs[1:, :, :2] = positions
+    # Time coordinate broadcast
+    trajs[:, :, 2] = np.arange(num_timesteps)[:, None]
+
+    return trajs

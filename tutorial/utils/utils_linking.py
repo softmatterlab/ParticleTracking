@@ -87,10 +87,9 @@ mpl.rcParams["animation.embed_limit"] = 60
 def simulate_Brownian_trajs(
         num_particles,
         num_timesteps,
-        R,
         l,
 ):
-    """Generates trajectories of particles exhibiting Brownian motion.
+    """Generates 2D trajectories of particles exhibiting Brownian motion.
 
     Parameters
     ----------
@@ -117,7 +116,6 @@ def simulate_Brownian_trajs(
     start_positions = generate_centroids(
         num_particles=num_particles,
         box_size=2*l, 
-        R=R,
     )
     pos = np.empty([num_particles,2])
     trajs_gt = np.empty([num_timesteps, num_particles, 2 + 1])
@@ -148,111 +146,111 @@ def simulate_Brownian_trajs(
             trajs_gt[t + 1, particle_idx, 2] = t + 1
     return trajs_gt
 
-def transform_to_video(
-    trajectory_data,
-    particle_props={},
-    optics_props={},
-    background_props={},
-    image_size = [],
-    save_video=False,
-    maps = True,
-    path="",
+# def transform_to_video(
+#     trajectory_data,
+#     particle_props={},
+#     optics_props={},
+#     background_props={},
+#     image_size = [],
+#     save_video=False,
+#     maps = True,
+#     path="",
 
-):
-    _particle_dict = {
-        "z": 0, # For particles out of focus, give z a nonzero value.
-        "position_unit": "pixel",
-    }
+# ):
+#     _particle_dict = {
+#         "z": 0, # For particles out of focus, give z a nonzero value.
+#         "position_unit": "pixel",
+#     }
         
-    _optics_dict = {
-        "NA": 1.4,  # Numerical aperture.
-        "wavelength": 633. * dt.units.nm, 
-        "refractive_index_medium": 1.33,
-        "output_region": [0, 0, image_size, image_size],
-        "magnification": 1,
-        "resolution": 50 * dt.units.nm,
-    }
+#     _optics_dict = {
+#         "NA": 1.4,  # Numerical aperture.
+#         "wavelength": 633 * dt.units.nm, 
+#         "refractive_index_medium": 1.33,
+#         "output_region": [0, 0, image_size, image_size],
+#         "magnification": 1,
+#         "resolution": 50 * dt.units.nm,
+#     }
 
-    # Background offset.
-    _background_dict = {
-        "background_mean": 85,  # Mean background intensity.
-        "background_std": 0,  # Standard deviation of background intensity.
-    }
+#     # Background offset.
+#     _background_dict = {
+#         "background_mean": 85,  # Mean background intensity.
+#         "background_std": 0,  # Standard deviation of background intensity.
+#     }
     
-    # Update the dictionaries with the user-defined values.
-    _particle_dict.update(particle_props)
-    _optics_dict.update(optics_props)
-    _background_dict.update(background_props)
+#     # Update the dictionaries with the user-defined values.
+#     _particle_dict.update(particle_props)
+#     _optics_dict.update(optics_props)
+#     _background_dict.update(background_props)
 
 
-    # Reshape the trajectory.
-    trajectory_data = np.moveaxis(trajectory_data, 0, 1)
+#     # Reshape the trajectory.
+#     trajectory_data = np.moveaxis(trajectory_data, 0, 1)
 
-    inner_sphere = dt.Sphere(
-        trajectories=trajectory_data,
-        replicate_index=lambda _ID: _ID,
-        trajectory=lambda replicate_index, trajectories: dt.units.pixel
-        * trajectories[replicate_index[-1]],
-        number_of_particles=trajectory_data.shape[0],
-        traj_length=trajectory_data.shape[1],
-        position=lambda trajectory: trajectory[0],
-        radius= lambda: np.random.uniform(40e-9, 120e-9),
-        intensity= 1000,  # Change the intensities here
-        **_particle_dict,
-)
+#     inner_sphere = dt.Sphere(
+#         trajectories=trajectory_data,
+#         replicate_index=lambda _ID: _ID,
+#         trajectory=lambda replicate_index, trajectories: dt.units.pixel
+#         * trajectories[replicate_index[-1]],
+#         number_of_particles=trajectory_data.shape[0],
+#         traj_length=trajectory_data.shape[1],
+#         position=lambda trajectory: trajectory[0],
+#         radius= lambda: np.random.uniform(40e-9, 120e-9),
+#         intensity= 1000,  # Change the intensities here
+#         **_particle_dict,
+# )
 
-    # Make it sequential.
-    sequential_particle = dt.Sequential(
-        inner_sphere,
-        position=lambda trajectory, sequence_step: trajectory[sequence_step],
-    )
-    background = dt.Add(
-        value=80
-    )  
-    def background_variation(previous_values, previous_value):
-        return (previous_values or [previous_value])[0]\
-                + np.random.randn() * _background_dict["background_std"]
+#     # Make it sequential.
+#     sequential_particle = dt.Sequential(
+#         inner_sphere,
+#         position=lambda trajectory, sequence_step: trajectory[sequence_step],
+#     )
+#     background = dt.Add(
+#         value=80
+#     )  
+#     def background_variation(previous_values, previous_value):
+#         return (previous_values or [previous_value])[0]\
+#                 + np.random.randn() * _background_dict["background_std"]
 
-    sequential_background = dt.Sequential(background, 
-                                value=background_variation)
-
-
-    # Define optical setup.
-    optics = dt.Fluorescence(**_optics_dict) 
+#     sequential_background = dt.Sequential(background, 
+#                                 value=background_variation)
 
 
-    scale_factor = (
-        (optics.magnification() * optics.wavelength() /
-         (optics.NA() * optics.resolution())) ** 2) * (1 / np.pi)
+#     # Define optical setup.
+#     optics = dt.Fluorescence(**_optics_dict) 
 
-    # The only place where a linebreak does not work for some reason...
-    sample = (
-        optics((sequential_particle) ^ sequential_particle.number_of_particles)         
-        )   >> dt.Divide(scale_factor) >> sequential_background \
-            >> dt.Gaussian(0,0.02) >> dt.NormalizeMinMax(0,1)
+
+#     scale_factor = (
+#         (optics.magnification() * optics.wavelength() /
+#          (optics.NA() * optics.resolution())) ** 2) * (1 / np.pi)
+
+#     # The only place where a linebreak does not work for some reason...
+#     sample = (
+#         optics((sequential_particle) ^ sequential_particle.number_of_particles)         
+#         )   >> dt.Divide(scale_factor) >> sequential_background \
+#             >> dt.Gaussian(0,0.02) >> dt.NormalizeMinMax(0,1)
         
-    # Sequential sample.
-    sequential_sample = dt.Sequence(
-        sample,
-        trajectory=inner_sphere.trajectories,
-        sequence_length=inner_sphere.traj_length,
-    )
+#     # Sequential sample.
+#     sequential_sample = dt.Sequence(
+#         sample,
+#         trajectory=inner_sphere.trajectories,
+#         sequence_length=inner_sphere.traj_length,
+#     )
 
-    # Resolve the sample.
-    _video = sequential_sample.update().resolve()
+#     # Resolve the sample.
+#     _video = sequential_sample.update().resolve()
 
-    final_output = _video
+#     final_output = _video
 
-    return final_output
+#     return final_output
 
 
 
 def generate_centroids(
         num_particles,
         box_size,
-        R
+        R=0,
 ):
-    """Generates non-overlapping particle positions in a 2D image. 
+    """Generates particle positions in a 2D image. 
     Relies on random number generation.
 
     Parameters
@@ -316,7 +314,7 @@ def traj_break(
         _boxLength,
         n
 ):
-    """Breaks trajectories
+    """Breaks trajectories.
 
     The ground truth trajectories can exceed the FOV, this function will
     thus break the trajectories exiting/entering the FOV and make a list of the 
@@ -339,6 +337,7 @@ def traj_break(
         A list of trajectories that has entered/exited the FOV.
 
     """
+
     trajs_gt_list = []
     trajs_gt_n = trajs_gt[:, :, [2, 0, 1]] #swap axes, frame first
     for j in range(n):
