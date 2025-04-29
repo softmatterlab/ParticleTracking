@@ -344,8 +344,6 @@ def transform_to_video(
     if len(trajectory_data.shape) == 2:
         trajectory_data = trajectory_data[np.newaxis, :]  # Add a new axis.
     
-    print(trajectory_data.shape)
-
     # Check if trajectory data has 3 axis (X, Y, angle).
     if trajectory_data.shape[-1] == 3:
 
@@ -353,16 +351,13 @@ def transform_to_video(
         angles = - trajectory_data[-1][:, 2]
 
         # Chop the third axis to extract only (X,Y) positions.
-        trajectory_data[-1][...] = trajectory_data[-1][:, :2]
+        trajectory_data = trajectory_data[..., :2]
     else:
         angles = np.zeros([trajectory_data[-1].shape[0], 1])
-    print(angles.shape)
 
     # The desired format is (N, frames, dim), with dim the spatial dimensions.
     trajectory_data = np.moveaxis(trajectory_data, 0, 1)  # Swap axis.
     
-    print(trajectory_data.shape)
-
     # Generate inner particle (core).
     inner_particle = dt.Ellipsoid(
         trajectories=trajectory_data,
@@ -467,8 +462,6 @@ def transform_to_video(
         >> sequential_background
         # >> dt.NormalizeMinMax()
     )
-    print(trajectory_data.shape[1])
-    print(inner_particle.traj_length())
 
     if trajectory_data.shape[1] > 1:
         # Sequentially update and resolve the sample to produce video frames.
