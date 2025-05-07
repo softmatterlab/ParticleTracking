@@ -64,6 +64,7 @@ Classes:
 
 """
 import os
+from typing import List, Tuple
 from math import cos, pi, sin
 
 import cv2
@@ -446,122 +447,208 @@ def format_image(img):
     return formatted_img
 
 
-def make_video_with_trajs(
-        trajs_list,
-        trajs_gt_list, 
-        sim_movie,
-        _boxLength
-):
-    """Generates video with linked trajectories and ground truth.
+# def make_video_with_trajs(
+#         trajs_list,
+#         trajs_gt_list, 
+#         sim_movie,
+#         _boxLength
+# ):
+#     """Generates video with linked trajectories and ground truth.
 
-    Overlays them with the simulated video.
+#     Overlays them with the simulated video.
+
+#     Parameters
+#     ----------
+#     trajs_list: list
+#         List of obtained trajectories in the FOV.
+
+#     trajs_gt_list: list
+#         List of ground truth trajectories in the FOV.
+
+#     sim_movie: np.ndarray 
+#         Simulated movie to overlay with.
+
+#     Returns
+#     ----------
+#     IPython.core.display.HTML
+#         HTML player with video generated from trajectories,
+#         Overlays movie with markers and trajectory lines for 
+#         ground truth and predictions.
+
+#     """
+#     fig, ax = plt.subplots(figsize=(5, 5))
+#     def update(frame):
+      
+#       # Display the current frame.
+#       display_frame = sim_movie[frame]
+#       ax.clear()
+#       ax.imshow(display_frame, cmap="gray")
+#       ax.set_xlim([0, 2 * _boxLength])
+#       ax.set_ylim([0, 2 * _boxLength])
+
+
+#       # Plot prediction trajectories.
+#       for t in trajs_list:
+#           t = t[np.where(t[:, 0] <= frame)]
+#           if len(t) > 0:
+#               ax.plot(
+#                   t[:, 2],
+#                   t[:, 1],
+#                   color="w",
+#                   linewidth=0.5,
+#               )
+#               ax.scatter(
+#                   t[-1, 2],
+#                   t[-1, 1],
+#                   marker="o",
+#                   linewidths=1,
+#                   edgecolors="r",
+#                   s=100,
+#                   facecolors="none",
+#               )
+#       # Plot ground truth trajectories.
+#       for t in trajs_gt_list:
+
+#           # Filter points up to the current frame.
+#           t = t[np.where(t[:, 0] <= frame)]
+#           if len(t) > 0:
+
+#               # Ground truth line (might be redundant, 
+#               # pick a good color otherwise).
+#               #ax.plot(t[:, 2], t[:, 1], color="r", linewidth=1) 
+#               ax.scatter(
+#                   t[-1, 2],
+#                   t[-1, 1],
+#                   linewidths=1,
+#                   s=90,
+#                   color="c",
+#                   marker="+",
+#               )
+
+#       # Create legend handles.
+#       prediction_handle = mlines.Line2D(
+#           [],
+#           [],
+#           color="r",
+#           markerfacecolor="none",
+#           marker="o",
+#           linewidth=1,
+#           linestyle="None",
+#           label="Prediction",
+#       )
+
+#       ground_truth_handle = mlines.Line2D(
+#           [],
+#           [],
+#           color="c",
+#           marker="+",
+#           linestyle="None",
+#           label="Ground truth positions",
+#       )
+
+#       # Add legend to the axis.
+#       ax.legend(
+#           handles=[prediction_handle,
+#                    ground_truth_handle],
+#           loc="upper left")
+#       return ax
+
+#     animation = FuncAnimation(
+#         fig,
+#         update,
+#         frames=len(sim_movie)
+#     )
+
+#     video = HTML(animation.to_jshtml()); plt.close()
+#     return video
+
+def make_video_with_trajs(
+    trajs_list,
+    trajs_gt_list, 
+    sim_movie,
+    _boxLength
+):
+    """Generate video with linked trajectories and ground truth.
+    
+    Generates an HTML video with linked predicted and ground truth trajectories 
+    overlaid on the simulated movie.
 
     Parameters
     ----------
-    trajs_list: list
-        List of obtained trajectories in the FOV.
+    trajs_list : list of np.ndarray
+        List of predicted trajectories. Each trajectory is an array of shape 
+        (T, 3): [frame, y, x].
 
-    trajs_gt_list: list
-        List of ground truth trajectories in the FOV.
+    trajs_gt_list : list of np.ndarray
+        List of ground truth trajectories with same format as `trajs_list`.
 
-    sim_movie: np.ndarray 
-        Simulated movie to overlay with.
+    sim_movie : np.ndarray
+        Simulated video frames, shape (N_frames, H, W).
 
+    _boxLength : int
+        Half of the field of view (FOV); the full image size is 2 * _boxLength.
 
     Returns
-    ----------
+    -------
     IPython.core.display.HTML
-        HTML player with video generated from trajectories,
-        Overlays movie with markers and trajectory lines for 
-        ground truth and predictions.
+        HTML5 video displaying overlaid trajectories.
 
     """
+    
     fig, ax = plt.subplots(figsize=(5, 5))
-    def update(frame):
-      
-      # Display the current frame.
-      display_frame = sim_movie[frame]
-      ax.clear()
-      ax.imshow(display_frame, cmap="gray")
-      ax.set_xlim([0, 2 * _boxLength])
-      ax.set_ylim([0, 2 * _boxLength])
 
+    def update(frame_idx):
+        ax.clear()
 
-      # Plot prediction trajectories.
-      for t in trajs_list:
-          t = t[np.where(t[:, 0] <= frame)]
-          if len(t) > 0:
-              ax.plot(
-                  t[:, 2],
-                  t[:, 1],
-                  color="w",
-                  linewidth=0.5,
-              )
-              ax.scatter(
-                  t[-1, 2],
-                  t[-1, 1],
-                  marker="o",
-                  linewidths=1,
-                  edgecolors="r",
-                  s=100,
-                  facecolors="none",
-              )
-      # Plot ground truth trajectories.
-      for t in trajs_gt_list:
+        # Display current movie frame
+        frame_img = sim_movie[frame_idx]
+        ax.imshow(frame_img, cmap="gray")
+        ax.set_xlim([0, 2 * _boxLength])
+        ax.set_ylim([2 * _boxLength, 0])  # Invert y-axis
 
-          # Filter points up to the current frame.
-          t = t[np.where(t[:, 0] <= frame)]
-          if len(t) > 0:
+        # Remove ticks and labels
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.tick_params(left=False, bottom=False)
 
-              # Ground truth line (might be redundant, 
-              # pick a good color otherwise).
-              #ax.plot(t[:, 2], t[:, 1], color="r", linewidth=1) 
-              ax.scatter(
-                  t[-1, 2],
-                  t[-1, 1],
-                  linewidths=1,
-                  s=90,
-                  color="c",
-                  marker="+",
-              )
+        # Plot predicted trajectories
+        for traj in trajs_list:
+            t = traj[traj[:, 0] <= frame_idx]
+            if len(t) > 0:
+                ax.plot(t[:, 2], t[:, 1], color="w", linewidth=0.5)
+                ax.scatter(
+                    t[-1, 2], t[-1, 1],
+                    s=100, facecolors="none", edgecolors="r",
+                    marker="o", linewidths=1
+                )
 
-      # Create legend handles.
-      prediction_handle = mlines.Line2D(
-          [],
-          [],
-          color="r",
-          markerfacecolor="none",
-          marker="o",
-          linewidth=1,
-          linestyle="None",
-          label="Prediction",
-      )
+        # Plot ground truth trajectories
+        for traj in trajs_gt_list:
+            t = traj[traj[:, 0] <= frame_idx]
+            if len(t) > 0:
+                ax.scatter(
+                    t[-1, 2], t[-1, 1],
+                    color="c", s=90, marker="+", linewidths=1
+                )
 
-      ground_truth_handle = mlines.Line2D(
-          [],
-          [],
-          color="c",
-          marker="+",
-          linestyle="None",
-          label="Ground truth positions",
-      )
+        # Add legend
+        pred_handle = mlines.Line2D(
+            [], [], color="r", marker="o", linestyle="None",
+            markerfacecolor="none", label="Prediction"
+        )
+        gt_handle = mlines.Line2D(
+            [], [], color="c", marker="+", linestyle="None", 
+            label="Ground Truth"
+        )
+        ax.legend(handles=[pred_handle, gt_handle], loc="upper left")
 
-      # Add legend to the axis.
-      ax.legend(
-          handles=[prediction_handle,
-                   ground_truth_handle],
-          loc="upper left")
-      return ax
+        return ax
 
-    animation = FuncAnimation(
-        fig,
-        update,
-        frames=len(sim_movie)
-    )
+    animation = FuncAnimation(fig, update, frames=len(sim_movie))
+    video = HTML(animation.to_jshtml())
+    plt.close(fig)
 
-    video = HTML(animation.to_jshtml()); plt.close()
     return video
-
 
 
 def trajectory_sqdistance(
@@ -588,6 +675,7 @@ def trajectory_sqdistance(
         Squared distance between trajectories.
 
     """
+   
     union = np.union1d(
         gt[:, 0],
         pred[:, 0]
@@ -606,13 +694,17 @@ def trajectory_sqdistance(
     gt_f[gt_i, :] = gt[:, 1:]
     pred_f[pred_i, :] = pred[:, 1:]
 
-    d = np.sum((gt_f - pred_f) ** 2, axis=1)
+    # d = np.sum((gt_f - pred_f) ** 2, axis=1)
+    # d[np.where(d > eps ** 2)]    = eps ** 2
+    # d[np.isinf(d) | np.isnan(d)] = eps ** 2  
+    # return np.sum(d)
 
-    d[np.where(d > eps ** 2)]    = eps ** 2
-    d[np.isinf(d) | np.isnan(d)] = eps ** 2  
+    mask = np.isfinite(gt_f[:, 0]) & np.isfinite(pred_f[:, 0])
+    d2 = np.full(len(ind), eps**2)
+    d2[mask] = np.sum((gt_f[mask] - pred_f[mask]) ** 2, axis=1)
+    d2 = np.minimum(d2, eps**2)
 
-    return np.sum(d)
-
+    return np.sum(d2)
 
 
 def trajectory_assignment(
@@ -648,6 +740,7 @@ def trajectory_assignment(
         and ground truth trajectories.
         
     """
+
     dmax = 0
     cost_matrix = np.zeros((len(ground_truth), len(prediction)))
 
@@ -658,16 +751,27 @@ def trajectory_assignment(
 
     return linear_sum_assignment(cost_matrix), cost_matrix, dmax
 
+
 def trajectory_metrics(
     gt,
     pred,
     eps=5,
 ):
-    """Function to calculate linking metrics.
-    As in doi.org/10.1038/nmeth.2808.
+    """Computes tracking performance metrics.
 
+    This function computes tracking performance metrics between ground truth 
+    and predicted trajectories based on Chenouard et al. (Nat. Methods 2014, 
+    doi.org/10.1038/nmeth.2808): TP, FP, FN, alpha, and beta.
+    
     Parameters
     ----------
+    gt: np.ndarray
+        Array of ground truth trajectories.
+    pred: np.ndarray
+        Array of predicted trajectories.
+    eps: int, optional
+        Defines the threshold for calculating squared distances and can be
+        used to scale the penalty for mismatches.
 
     Returns
     -------
@@ -675,6 +779,7 @@ def trajectory_metrics(
         True positives, false positives, false negatives, alpha, beta.
 
     """
+
     trajectory_pair, mat, dmax = trajectory_assignment(gt, pred, eps=5)
 
     d = sum(mat[trajectory_pair[0][:], trajectory_pair[1][:]])
@@ -696,8 +801,8 @@ def trajectory_metrics(
         TP: {TP}
         FP: {FP}
         FN: {FN} 
-        alpha: {alpha}
-        beta: {beta}"""
+        alpha: {alpha:.3f}
+        beta: {beta:.3f}"""
     )
     return TP, FP, FN, alpha, beta
 
@@ -738,6 +843,73 @@ def normalize_min_max(
     )
 
     return normalized_img
+
+def plot_trajectory_matches(
+    trajs_gt_list: List[np.ndarray],
+    trajs_pred_list: List[np.ndarray],
+    matched_pairs: Tuple[np.ndarray, np.ndarray],
+    figsize: Tuple[int, int] = (6, 6),
+) -> None:
+    """
+    Plots matched and unmatched trajectories for visual evaluation.
+
+    Parameters
+    ----------
+    trajs_gt_list : list of np.ndarray
+        List of ground truth trajectories, each with shape (T, 3) [frame, y, x].
+
+    trajs_pred_list : list of np.ndarray
+        List of predicted trajectories, same format.
+
+    matched_pairs : tuple of (np.ndarray, np.ndarray)
+        Indices of matched trajectories (as returned by `linear_sum_assignment`).
+
+    figsize : tuple
+        Size of the matplotlib figure.
+    """
+    fig = plt.figure(figsize=figsize)
+    ax = plt.gca()
+    
+    # Plot matched trajectories.
+    colors = np.random.rand(len(matched_pairs[0]), 3)
+    for (gt_idx, pred_idx), color in zip(zip(*matched_pairs), colors):
+        gt_traj = trajs_gt_list[gt_idx]
+        pred_traj = trajs_pred_list[pred_idx]
+
+        ax.plot(pred_traj[:, 2], pred_traj[:, 1], color=color, linewidth=3, label="_predicted")
+        ax.plot(gt_traj[:, 2], gt_traj[:, 1], color="k", linewidth=1, label="_groundtruth")
+
+    # Identify and plot unmatched ground truth (false negatives).
+    unmatched_gt = set(range(len(trajs_gt_list))) - set(matched_pairs[0])
+    for idx in unmatched_gt:
+        traj = trajs_gt_list[idx]
+        ax.plot(traj[:, 2], traj[:, 1], color="gray", linewidth=1, label="_false_negative")
+
+    # Identify and plot unmatched predictions (false positives).
+    unmatched_pred = set(range(len(trajs_pred_list))) - set(matched_pairs[1])
+    for idx in unmatched_pred:
+        traj = trajs_pred_list[idx]
+        ax.plot(traj[:, 2], traj[:, 1], color="r", linewidth=1, label="_false_positive")
+
+    # Set up legend with unique labels only once.
+    legend_handles = [
+        plt.Line2D([], [], color='k', linewidth=1, label='Ground Truth'),
+        plt.Line2D([], [], color='r', linewidth=1, label='False Positive'),
+        plt.Line2D([], [], color='gray', linewidth=1, label='False Negative'),
+        plt.Line2D([], [], color='gray', linewidth=3, label='Prediction'),
+    ]
+    ax.legend(handles=legend_handles, loc='upper right')
+
+    # Format plot
+    ax.invert_yaxis()
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_title("Trajectory Matching")
+
+    plt.tight_layout()
+    plt.show()
 
 
 """CLASSES FOR MAGIK 
@@ -960,3 +1132,4 @@ class ComputeTrajectories:
                 if len(edge) == 1:
                     pruned_edges.append(tuple(*edge.numpy()))
         return pruned_edges
+
