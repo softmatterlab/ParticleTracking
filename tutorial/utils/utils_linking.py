@@ -311,51 +311,101 @@ def generate_centroids(
 
 
 def traj_break(
-        trajs_gt,
-        _boxLength,
-        n
-):
-    """Breaks trajectories.
+    trajectories: np.ndarray,
+    fov_size: int,
+    num_particles: int,
+) -> list[np.ndarray]:
+    """Break trajectories when particles leave and re-enter the FOV.
 
-    The ground truth trajectories can exceed the FOV, this function will
-    thus break the trajectories exiting/entering the FOV and make a list of the 
-    trajectories which are only in the FOV.
+    This function splits each ground truth trajectory into sub-trajectories 
+    that remain within the the field of view (FOV), by detecting large jumps 
+    in position.
 
     Parameters
     ----------
-    trajs_gt: np.ndarray
-        Ground truth trajectories.
+    trajectories : np.ndarray
+        Ground truth trajectories of shape (T, N, 3), where the last dimension 
+        is (x, y, frame).
 
-    _boxLength: int
-        Half of the FOV.
+    fov_size : int
+        Size of the full field of view (e.g. width or height in pixels).
 
-    n: int
-        Number of particles.
-    
+    num_particles : int
+        Total number of particles in the simulation.
+
     Returns
-    ----------
-    trajs_gt_list: 
-        A list of trajectories that has entered/exited the FOV.
-
+    -------
+    list of np.ndarray
+        List of valid trajectory segments (with shape (t_i, 3): [frame, y, x]) 
+        that stayed within FOV.
+    
     """
 
-    trajs_gt_list = []
-    trajs_gt_n = trajs_gt[:, :, [2, 0, 1]] #swap axes, frame first
-    for j in range(n):
-        dx = np.abs(trajs_gt[1:, j, 0] - trajs_gt[:-1, j, 0])
-        dy = np.abs(trajs_gt[1:, j, 1] - trajs_gt[:-1, j, 1])
+    valid_segments = []
+    trajectories_swapped = trajectories[:, :, [2, 0, 1]]  
+    # shape (T, N, [frame, x, y]) -> (frame, y, x)
 
-        ind = np.where((dx > 1.5 * _boxLength) | (dy > 1.5 * _boxLength))[0]
-        ind = list(np.unique((-1, len(dx) + 1, *ind)))
+    threshold = 0.75 * fov_size  # equivalent to 1.5 * half-box
 
-        for k in range(len(ind) - 1):
-            trajs_gt_list.append(trajs_gt_n[ind[k] + 1:ind[k + 1], j, :])
-    return trajs_gt_list
+    for particle_index in range(num_particles):
+        dx = np.abs(np.diff(trajectories[:, particle_index, 0]))
+        dy = np.abs(np.diff(trajectories[:, particle_index, 1]))
+        jumps = np.where((dx > threshold) | (dy > threshold))[0]
+
+        # Add start and end of trajectory
+        split_indices = np.unique(np.concatenate(([-1], jumps + 1, [len(dx) + 1])))
+
+        for start, end in zip(split_indices[:-1], split_indices[1:]):
+            segment = trajectories_swapped[start:end, particle_index, :]
+            if len(segment) > 0:
+                valid_segments.append(segment)
+
+    return valid_segments
+#         trajs_gt,
+#         _boxLength,
+#         n
+# ):
+#     """Breaks trajectories.
+
+#     The ground truth trajectories can exceed the FOV, this function will
+#     thus break the trajectories exiting/entering the FOV and make a list of the 
+#     trajectories which are only in the FOV.
+
+#     Parameters
+#     ----------
+#     trajs_gt: np.ndarray
+#         Ground truth trajectories.
+
+#     _boxLength: int
+#         Half of the FOV.
+
+#     n: int
+#         Number of particles.
+    
+#     Returns
+#     ----------
+#     trajs_gt_list: 
+#         A list of trajectories that has entered/exited the FOV.
+
+#     """
+
+#     trajs_gt_list = []
+#     trajs_gt_n = trajs_gt[:, :, [2, 0, 1]] #swap axes, frame first
+#     for j in range(n):
+#         dx = np.abs(trajs_gt[1:, j, 0] - trajs_gt[:-1, j, 0])
+#         dy = np.abs(trajs_gt[1:, j, 1] - trajs_gt[:-1, j, 1])
+
+#         ind = np.where((dx > 1.5 * _boxLength) | (dy > 1.5 * _boxLength))[0]
+#         ind = list(np.unique((-1, len(dx) + 1, *ind)))
+
+#         for k in range(len(ind) - 1):
+#             trajs_gt_list.append(trajs_gt_n[ind[k] + 1:ind[k + 1], j, :])
+#     return trajs_gt_list
 
 
 def play_video(
     video,
-    video_name="movie",
+    video_name="video",
     figsize=(5, 5),
     fps=10    
 ):
@@ -376,7 +426,7 @@ def play_video(
     -------
     None
 
-        Instances a HTML video player with a movie.
+        Instances a HTML video player with a video.
 
     """
     fig = plt.figure(figsize=figsize)
@@ -396,29 +446,29 @@ def play_video(
     plt.close()
 
 
-def convert_uint8(movie):
-    """Converts movie to uint8 format.
+def convert_uint8(video):
+    """Converts video to uint8 format.
 
     Parameters
     ----------
-    movie: np.ndarray 
-        Movie to be converted.
+    video: np.ndarray 
+        video to be converted.
         
     Returns
     -------
 
-    converted_movie: np.ndarray
-        Movie in uint8 format.
+    converted_video: np.ndarray
+        video in uint8 format.
 
     """
-    converted_movie = []
-    for idx_im, im in enumerate(movie):
+    converted_video = []
+    for idx_im, im in enumerate(video):
         im = im[:, :, 0]
         im = im / im.max()
         im = im * 255
         im = im.astype(np.uint8)
-        converted_movie.append(im)
-    return converted_movie
+        converted_video.append(im)
+    return converted_video
 
 def format_image(img):
     """Expands and formats image to (N, C, X, Y), needed for LodeSTAR.
@@ -450,7 +500,7 @@ def format_image(img):
 # def make_video_with_trajs(
 #         trajs_list,
 #         trajs_gt_list, 
-#         sim_movie,
+#         sim_video,
 #         _boxLength
 # ):
 #     """Generates video with linked trajectories and ground truth.
@@ -465,14 +515,14 @@ def format_image(img):
 #     trajs_gt_list: list
 #         List of ground truth trajectories in the FOV.
 
-#     sim_movie: np.ndarray 
-#         Simulated movie to overlay with.
+#     sim_video: np.ndarray 
+#         Simulated video to overlay with.
 
 #     Returns
 #     ----------
 #     IPython.core.display.HTML
 #         HTML player with video generated from trajectories,
-#         Overlays movie with markers and trajectory lines for 
+#         Overlays video with markers and trajectory lines for 
 #         ground truth and predictions.
 
 #     """
@@ -480,7 +530,7 @@ def format_image(img):
 #     def update(frame):
       
 #       # Display the current frame.
-#       display_frame = sim_movie[frame]
+#       display_frame = sim_video[frame]
 #       ax.clear()
 #       ax.imshow(display_frame, cmap="gray")
 #       ax.set_xlim([0, 2 * _boxLength])
@@ -556,7 +606,7 @@ def format_image(img):
 #     animation = FuncAnimation(
 #         fig,
 #         update,
-#         frames=len(sim_movie)
+#         frames=len(sim_video)
 #     )
 
 #     video = HTML(animation.to_jshtml()); plt.close()
@@ -565,13 +615,13 @@ def format_image(img):
 def make_video_with_trajs(
     trajs_list,
     trajs_gt_list, 
-    sim_movie,
+    sim_video,
     _boxLength
 ):
     """Generate video with linked trajectories and ground truth.
     
     Generates an HTML video with linked predicted and ground truth trajectories 
-    overlaid on the simulated movie.
+    overlaid on the simulated video.
 
     Parameters
     ----------
@@ -582,7 +632,7 @@ def make_video_with_trajs(
     trajs_gt_list : list of np.ndarray
         List of ground truth trajectories with same format as `trajs_list`.
 
-    sim_movie : np.ndarray
+    sim_video : np.ndarray
         Simulated video frames, shape (N_frames, H, W).
 
     _boxLength : int
@@ -600,8 +650,8 @@ def make_video_with_trajs(
     def update(frame_idx):
         ax.clear()
 
-        # Display current movie frame
-        frame_img = sim_movie[frame_idx]
+        # Display current video frame
+        frame_img = sim_video[frame_idx]
         ax.imshow(frame_img, cmap="gray")
         ax.set_xlim([0, 2 * _boxLength])
         ax.set_ylim([2 * _boxLength, 0])  # Invert y-axis
@@ -644,7 +694,7 @@ def make_video_with_trajs(
 
         return ax
 
-    animation = FuncAnimation(fig, update, frames=len(sim_movie))
+    animation = FuncAnimation(fig, update, frames=len(sim_video))
     video = HTML(animation.to_jshtml())
     plt.close(fig)
 
