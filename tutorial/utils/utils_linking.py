@@ -311,7 +311,7 @@ def generate_centroids(
 
 
 def traj_break(
-    trajectories: np.ndarray,
+    trajs_gt: np.ndarray,
     fov_size: int,
     num_particles: int,
 ) -> list[np.ndarray]:
@@ -341,66 +341,18 @@ def traj_break(
     
     """
 
-    valid_segments = []
-    trajectories_swapped = trajectories[:, :, [2, 0, 1]]  
-    # shape (T, N, [frame, x, y]) -> (frame, y, x)
+    trajs_gt_list = []
+    trajs_gt_n = trajs_gt[:, :, [2, 0, 1]] #swap axes, frame first
+    for j in range(num_particles):
+        dx = np.abs(trajs_gt[1:, j, 0] - trajs_gt[:-1, j, 0])
+        dy = np.abs(trajs_gt[1:, j, 1] - trajs_gt[:-1, j, 1])
 
-    threshold = 0.75 * fov_size  # equivalent to 1.5 * half-box
+        ind = np.where((dx > 0.75 * fov_size) | (dy > 0.75 * fov_size))[0]
+        ind = list(np.unique((-1, len(dx) + 1, *ind)))
 
-    for particle_index in range(num_particles):
-        dx = np.abs(np.diff(trajectories[:, particle_index, 0]))
-        dy = np.abs(np.diff(trajectories[:, particle_index, 1]))
-        jumps = np.where((dx > threshold) | (dy > threshold))[0]
-
-        # Add start and end of trajectory
-        split_indices = np.unique(np.concatenate(([-1], jumps + 1, [len(dx) + 1])))
-
-        for start, end in zip(split_indices[:-1], split_indices[1:]):
-            segment = trajectories_swapped[start:end, particle_index, :]
-            if len(segment) > 0:
-                valid_segments.append(segment)
-
-    return valid_segments
-#         trajs_gt,
-#         _boxLength,
-#         n
-# ):
-#     """Breaks trajectories.
-
-#     The ground truth trajectories can exceed the FOV, this function will
-#     thus break the trajectories exiting/entering the FOV and make a list of the 
-#     trajectories which are only in the FOV.
-
-#     Parameters
-#     ----------
-#     trajs_gt: np.ndarray
-#         Ground truth trajectories.
-
-#     _boxLength: int
-#         Half of the FOV.
-
-#     n: int
-#         Number of particles.
-    
-#     Returns
-#     ----------
-#     trajs_gt_list: 
-#         A list of trajectories that has entered/exited the FOV.
-
-#     """
-
-#     trajs_gt_list = []
-#     trajs_gt_n = trajs_gt[:, :, [2, 0, 1]] #swap axes, frame first
-#     for j in range(n):
-#         dx = np.abs(trajs_gt[1:, j, 0] - trajs_gt[:-1, j, 0])
-#         dy = np.abs(trajs_gt[1:, j, 1] - trajs_gt[:-1, j, 1])
-
-#         ind = np.where((dx > 1.5 * _boxLength) | (dy > 1.5 * _boxLength))[0]
-#         ind = list(np.unique((-1, len(dx) + 1, *ind)))
-
-#         for k in range(len(ind) - 1):
-#             trajs_gt_list.append(trajs_gt_n[ind[k] + 1:ind[k + 1], j, :])
-#     return trajs_gt_list
+        for k in range(len(ind) - 1):
+            trajs_gt_list.append(trajs_gt_n[ind[k] + 1:ind[k + 1], j, :])
+    return trajs_gt_list
 
 
 def play_video(
@@ -497,172 +449,47 @@ def format_image(img):
     return formatted_img
 
 
-# def make_video_with_trajs(
-#         trajs_list,
-#         trajs_gt_list, 
-#         sim_video,
-#         _boxLength
-# ):
-#     """Generates video with linked trajectories and ground truth.
-
-#     Overlays them with the simulated video.
-
-#     Parameters
-#     ----------
-#     trajs_list: list
-#         List of obtained trajectories in the FOV.
-
-#     trajs_gt_list: list
-#         List of ground truth trajectories in the FOV.
-
-#     sim_video: np.ndarray 
-#         Simulated video to overlay with.
-
-#     Returns
-#     ----------
-#     IPython.core.display.HTML
-#         HTML player with video generated from trajectories,
-#         Overlays video with markers and trajectory lines for 
-#         ground truth and predictions.
-
-#     """
-#     fig, ax = plt.subplots(figsize=(5, 5))
-#     def update(frame):
-      
-#       # Display the current frame.
-#       display_frame = sim_video[frame]
-#       ax.clear()
-#       ax.imshow(display_frame, cmap="gray")
-#       ax.set_xlim([0, 2 * _boxLength])
-#       ax.set_ylim([0, 2 * _boxLength])
-
-
-#       # Plot prediction trajectories.
-#       for t in trajs_list:
-#           t = t[np.where(t[:, 0] <= frame)]
-#           if len(t) > 0:
-#               ax.plot(
-#                   t[:, 2],
-#                   t[:, 1],
-#                   color="w",
-#                   linewidth=0.5,
-#               )
-#               ax.scatter(
-#                   t[-1, 2],
-#                   t[-1, 1],
-#                   marker="o",
-#                   linewidths=1,
-#                   edgecolors="r",
-#                   s=100,
-#                   facecolors="none",
-#               )
-#       # Plot ground truth trajectories.
-#       for t in trajs_gt_list:
-
-#           # Filter points up to the current frame.
-#           t = t[np.where(t[:, 0] <= frame)]
-#           if len(t) > 0:
-
-#               # Ground truth line (might be redundant, 
-#               # pick a good color otherwise).
-#               #ax.plot(t[:, 2], t[:, 1], color="r", linewidth=1) 
-#               ax.scatter(
-#                   t[-1, 2],
-#                   t[-1, 1],
-#                   linewidths=1,
-#                   s=90,
-#                   color="c",
-#                   marker="+",
-#               )
-
-#       # Create legend handles.
-#       prediction_handle = mlines.Line2D(
-#           [],
-#           [],
-#           color="r",
-#           markerfacecolor="none",
-#           marker="o",
-#           linewidth=1,
-#           linestyle="None",
-#           label="Prediction",
-#       )
-
-#       ground_truth_handle = mlines.Line2D(
-#           [],
-#           [],
-#           color="c",
-#           marker="+",
-#           linestyle="None",
-#           label="Ground truth positions",
-#       )
-
-#       # Add legend to the axis.
-#       ax.legend(
-#           handles=[prediction_handle,
-#                    ground_truth_handle],
-#           loc="upper left")
-#       return ax
-
-#     animation = FuncAnimation(
-#         fig,
-#         update,
-#         frames=len(sim_video)
-#     )
-
-#     video = HTML(animation.to_jshtml()); plt.close()
-#     return video
-
 def make_video_with_trajs(
-    trajs_list,
-    trajs_gt_list, 
-    sim_video,
-    _boxLength
-):
-    """Generate video with linked trajectories and ground truth.
-    
-    Generates an HTML video with linked predicted and ground truth trajectories 
-    overlaid on the simulated video.
+    trajs_pred_list,
+    video,
+    fov_size,
+    trajs_gt_list=None,
+) -> HTML:
+    """Generate video with predicted (and optionally ground truth) trajectories.
 
     Parameters
     ----------
-    trajs_list : list of np.ndarray
+    trajs_pred_list : list of np.ndarray
         List of predicted trajectories. Each trajectory is an array of shape 
         (T, 3): [frame, y, x].
 
-    trajs_gt_list : list of np.ndarray
-        List of ground truth trajectories with same format as `trajs_list`.
+    video : np.ndarray
+        Video frames, shape (N_frames, H, W).
 
-    sim_video : np.ndarray
-        Simulated video frames, shape (N_frames, H, W).
+    fov_size : int
+        The full field of view (FOV) size.
 
-    _boxLength : int
-        Half of the field of view (FOV); the full image size is 2 * _boxLength.
+    trajs_gt_list : list of np.ndarray, optional
+        List of ground truth trajectories. Each trajectory must have shape 
+        (T, 3): [frame, y, x]. If None, only predictions are shown.
 
     Returns
     -------
     IPython.core.display.HTML
         HTML5 video displaying overlaid trajectories.
-
     """
-    
     fig, ax = plt.subplots(figsize=(5, 5))
 
     def update(frame_idx):
         ax.clear()
-
-        # Display current video frame
-        frame_img = sim_video[frame_idx]
-        ax.imshow(frame_img, cmap="gray")
-        ax.set_xlim([0, 2 * _boxLength])
-        ax.set_ylim([2 * _boxLength, 0])  # Invert y-axis
-
-        # Remove ticks and labels
-        ax.set_xticks([])
-        ax.set_yticks([])
+        ax.imshow(video[frame_idx], cmap="gray")
+        ax.set_xlim([0, fov_size])
+        ax.set_ylim([fov_size, 0])  # Invert y-axis
+        ax.set_xticks([]), ax.set_yticks([])
         ax.tick_params(left=False, bottom=False)
 
         # Plot predicted trajectories
-        for traj in trajs_list:
+        for traj in trajs_pred_list:
             t = traj[traj[:, 0] <= frame_idx]
             if len(t) > 0:
                 ax.plot(t[:, 2], t[:, 1], color="w", linewidth=0.5)
@@ -672,33 +499,32 @@ def make_video_with_trajs(
                     marker="o", linewidths=1
                 )
 
-        # Plot ground truth trajectories
-        for traj in trajs_gt_list:
-            t = traj[traj[:, 0] <= frame_idx]
-            if len(t) > 0:
-                ax.scatter(
-                    t[-1, 2], t[-1, 1],
-                    color="c", s=90, marker="+", linewidths=1
-                )
+        legend_handles = [
+            mlines.Line2D([], [], color="r", marker="o", linestyle="None",
+                          markerfacecolor="none", label="Prediction")
+        ]
 
-        # Add legend
-        pred_handle = mlines.Line2D(
-            [], [], color="r", marker="o", linestyle="None",
-            markerfacecolor="none", label="Prediction"
-        )
-        gt_handle = mlines.Line2D(
-            [], [], color="c", marker="+", linestyle="None", 
-            label="Ground Truth"
-        )
-        ax.legend(handles=[pred_handle, gt_handle], loc="upper left")
+        # Plot ground truth trajectories if provided
+        if trajs_gt_list is not None:
+            for traj in trajs_gt_list:
+                t = traj[traj[:, 0] <= frame_idx]
+                if len(t) > 0:
+                    ax.scatter(
+                        t[-1, 2], t[-1, 1],
+                        color="c", s=90, marker="+", linewidths=1
+                    )
+            legend_handles.append(
+                mlines.Line2D([], [], color="c", marker="+", linestyle="None",
+                              label="Ground Truth")
+            )
 
+        ax.legend(handles=legend_handles, loc="upper left")
         return ax
 
-    animation = FuncAnimation(fig, update, frames=len(sim_video))
-    video = HTML(animation.to_jshtml())
+    anim = FuncAnimation(fig, update, frames=len(video))
+    video_html = HTML(anim.to_jshtml())
     plt.close(fig)
-
-    return video
+    return video_html
 
 
 def trajectory_sqdistance(
