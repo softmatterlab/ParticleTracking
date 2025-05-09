@@ -704,7 +704,10 @@ def plot_predicted_positions(**kwargs: dict) -> None:
 
     # Plot the image of the experiment/simulation.
     plt.figure()
-    plt.imshow(image, cmap="gray")
+
+    vmin, vmax = np.percentile(image, [1, 99])
+
+    plt.imshow(image, cmap="gray", vmin=vmin, vmax=vmax)
 
     # Control flags for the existence of ground truth and predicted positions.
     if ground_truth_positions is None:
@@ -1409,7 +1412,7 @@ def play_video(
     video,
     video_name="video",
     figsize=(5, 5),
-    fps=10    
+    fps=10,
 ):
     """Displays a stack of images as a video inside jupyter notebooks.
 
@@ -1436,8 +1439,10 @@ def play_video(
     plt.axis("off")
     plt.title(video_name, fontsize=14)
 
+    vmin, vmax = np.percentile(video, [1, 99])
+
     for image in video:
-        images.append([plt.imshow(image[:, :, 0], cmap="gray")])
+        images.append([plt.imshow(image[:, :, 0], cmap="gray", vmin=vmin, vmax=vmax)])
 
     anim = mpl.animation.ArtistAnimation(
         fig, images, interval=1e3 / fps, blit=True, repeat_delay=0
@@ -1488,11 +1493,14 @@ def format_image(img):
         image in (N, C, X, Y) format.
 
     """
+
+    from skimage.measure import block_reduce
+
     missing_array_dimensions = 4 - len(img.shape)
     for dim in range(missing_array_dimensions):
         img = np.expand_dims(img, axis=0)
-
     img = np.array(img).astype(np.float32)
+    # img = block_reduce(img, block_size=(1, 1, 2, 2), func=np.mean)
     img = normalize_min_max(img)
     img = torch.from_numpy(img)
 
