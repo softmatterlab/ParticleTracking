@@ -100,7 +100,7 @@ Methods:
 """
 
 from __future__ import annotations
-from typing import List, Tuple  # Type hinting for lists and tuples.
+from typing import List, Tuple, Optional  # Type hinting for lists and tuples.
 
 import math # Mathematical operations
 from math import cos, pi, sin
@@ -1383,12 +1383,27 @@ def traj_break(
         dx = np.abs(trajs[1:, j, 0] - trajs[:-1, j, 0])
         dy = np.abs(trajs[1:, j, 1] - trajs[:-1, j, 1])
 
-        ind = np.where((dx > 0.75 * fov_size) | (dy > 0.75 * fov_size))[0]
-        ind = list(np.unique((-1, len(dx) + 1, *ind)))
+        # ind = np.where((dx > 0.75 * fov_size) | (dy > 0.75 * fov_size))[0]
+        # ind = list(np.unique((-1, len(dx) + 1, *ind)))
 
-        for k in range(len(ind) - 1):
-            trajs_list.append(trajs_n[ind[k] + 1:ind[k + 1], j, :])
+        # for k in range(len(ind) - 1):
+        #     trajs_list.append(trajs_n[ind[k] + 1:ind[k + 1], j, :])
+
+        # Identify jumps indicating FOV exit/re-entry
+        jump_indices = np.where((dx > 0.75 * fov_size) | (dy > 0.75 * fov_size))[0]
+        boundaries = list(np.unique((-1, len(dx) + 1, *jump_indices)))
+
+        # Split into segments
+        for k in range(len(boundaries) - 1):
+            start = boundaries[k] + 1
+            end = boundaries[k + 1]
+            if (end - start) >= 5:  # prevent empty slices and shorter than 5
+                segment = trajs_n[start:end, j, :]
+                trajs_list.append(segment)
+
+
     return trajs_list
+
 
 def play_video(
     video,
@@ -1616,7 +1631,7 @@ def trajectory_sqdistance(
     d2[mask] = np.sum((gt_f[mask] - pred_f[mask]) ** 2, axis=1)
     d2 = np.minimum(d2, eps**2)
 
-    return np.sum(d2)
+    return np.sum(d2), len(ind)
 
 
 def trajectory_assignment(
@@ -1655,13 +1670,26 @@ def trajectory_assignment(
 
     dmax = 0
     cost_matrix = np.zeros((len(ground_truth), len(prediction)))
+    len_matrix = np.zeros((len(ground_truth), len(prediction)))
 
     for idxg, gt in enumerate(ground_truth):
         dmax += len(gt) * eps ** 2
         for idxp, pred in enumerate(prediction):
-            cost_matrix[idxg, idxp] = trajectory_sqdistance(gt,pred,eps)
+            cost_matrix[idxg, idxp], len_matrix[idxg, idxp] = trajectory_sqdistance(gt,pred,eps)
 
-    return linear_sum_assignment(cost_matrix), cost_matrix, dmax
+    # return linear_sum_assignment(cost_matrix), cost_matrix, dmax
+    
+    # cost_matrix computed earlier
+    row_ind, col_ind = linear_sum_assignment(cost_matrix/len_matrix)
+
+    # Filter matches by cost threshold
+    valid_matches = []
+    for r, c in zip(row_ind, col_ind):
+        if cost_matrix[r, c]/len_matrix[r,c] < eps**2:
+            valid_matches.append((r, c))
+
+    gt_indices, pred_indices = zip(*valid_matches) if valid_matches else ([], [])
+    return (np.array(gt_indices), np.array(pred_indices)), cost_matrix, dmax
 
 
 def trajectory_metrics(
@@ -1692,19 +1720,23 @@ def trajectory_metrics(
 
     """
 
-    trajectory_pair, mat, dmax = trajectory_assignment(gt, pred, eps=5)
+    trajectory_pair, mat, dmax = trajectory_assignment(gt, pred, eps=eps)
 
     d = sum(mat[trajectory_pair[0][:], trajectory_pair[1][:]])
     TP = len(trajectory_pair[0])
-    FP = np.max([0, len(pred) - len(gt)])
-    FN = np.max([0, len(gt) - len(pred)])
+    FP = np.max([0, len(pred) - TP])
+    FN = np.max([0, len(gt) - TP])
     dFP = 0.0
     if FP > 0:
-        complement = pred
-        for i in trajectory_pair[1]:
-            complement = np.delete(complement,i)
+        matched_indices = set(trajectory_pair[1])
+        complement = [pred[i] for i in range(len(pred)) if i not in matched_indices]
         for c in complement:
             dFP += len(c) * eps**2
+        # complement = pred
+        # for i in trajectory_pair[1]:
+        #     complement = np.delete(complement,i)
+        # for c in complement:
+        #     dFP += len(c) * eps**2
     alpha = 1.0 - d / dmax
     beta = (dmax - d) / (dmax + dFP)
 
@@ -1787,6 +1819,127 @@ def plot_trajectory_matches(
 
     plt.tight_layout()
     plt.show()
+
+
+def compute_TAMSD(traj: np.ndarray, max_lag: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Computes the Time-Averaged Mean Squared Displacement (TAMSD) of a trajectory.
+    
+    Parameters
+    ----------
+    traj : np.ndarray
+        Trajectory of shape (T, 3) in the form [frame, x, y].
+    
+    max_lag : int, optional
+        Maximum time lag to compute TAMSD for. Defaults to T // 2.
+    
+    Returns
+    -------
+    lags : np.ndarray
+        Time lags used.
+    tamsd : np.ndarray
+        TAMSD values corresponding to each lag.
+    """
+    if traj.shape[0] < 4:
+        return np.array([]), np.array([])
+
+
+    frames = traj[:, 0].astype(int)
+    coords = traj[:, 1:3]
+    max_frame = int(frames.max()) + 1
+    if max_lag is None:
+        max_lag = int((frames.max() - frames.min()) // 2)
+    traj_full = np.full((max_frame, 2), np.nan)
+    traj_full[frames] = coords
+
+    tamsd = []
+    lags = np.arange(1, max_lag + 1)
+    for lag in lags:
+        displacements = traj_full[:-lag] - traj_full[lag:]
+        valid = np.isfinite(displacements).all(axis=1)
+        squared = np.sum(displacements[valid]**2, axis=1)
+        if len(squared) > 0:
+            tamsd.append(np.mean(squared))
+        else:
+            tamsd.append(np.nan)
+    return lags, np.array(tamsd)
+
+def plot_TAMSDs(
+    trajs_pred: List[np.ndarray],
+    trajs_gt: Optional[List[np.ndarray]] = None,
+    matched_pairs: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+    max_lag: Optional[int] = None,
+) -> None:
+    """
+    Plots the TAMSDs for predicted and optionally ground truth trajectories.
+
+    Parameters
+    ----------
+    trajs_pred : list of np.ndarray
+        Predicted trajectories.
+
+    trajs_gt : list of np.ndarray, optional
+        Ground truth trajectories.
+
+    matched_pairs : tuple of arrays, optional
+        Tuple (gt_indices, pred_indices) for matched trajectories.
+
+    max_lag : int, optional
+        Maximum time lag to compute TAMSD. If None, it's estimated from trajectory length.
+    """
+    fig, axes = plt.subplots(
+        1, 
+        2 if trajs_gt is not None else 1, 
+        figsize=(10, 4) if trajs_gt is not None else (5, 4),
+        sharey=True
+    )
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+
+    if matched_pairs is not None:
+        colors = plt.cm.tab20(np.linspace(0, 1, len(matched_pairs[0])))
+        for color, (gt_idx, pr_idx) in zip(colors, zip(*matched_pairs)):
+            lag_gt, tamsd_gt = compute_TAMSD(trajs_gt[gt_idx], max_lag)
+            lag_pr, tamsd_pr = compute_TAMSD(trajs_pred[pr_idx], max_lag)
+            axes[0].plot(lag_pr, tamsd_pr, color=color)
+            axes[1].plot(lag_gt, tamsd_gt, color=color)
+
+        # # plot unmatched as faint
+        # unmatched_gt = set(range(len(trajs_gt))) - set(matched_pairs[0])
+        # unmatched_pr = set(range(len(trajs_pred))) - set(matched_pairs[1])
+        # for idx in unmatched_pr:
+        #     lag, tamsd = compute_TAMSD(trajs_pred[idx], max_lag)
+        #     axes[0].plot(lag, tamsd, color='gray', alpha=0.3)
+        # for idx in unmatched_gt:
+        #     lag, tamsd = compute_TAMSD(trajs_gt[idx], max_lag)
+        #     axes[1].plot(lag, tamsd, color='gray', alpha=0.3)
+
+    else:
+        for traj in trajs_pred:
+            lag, tamsd = compute_TAMSD(traj, max_lag)
+            axes[0 if trajs_gt is not None else 0].plot(lag, tamsd, alpha=0.7)
+
+        if trajs_gt is not None:
+            for traj in trajs_gt:
+                lag, tamsd = compute_TAMSD(traj, max_lag)
+                axes[1].plot(lag, tamsd, alpha=0.7)
+
+    axes[0].set_title("Predicted Trajectories")
+    axes[0].set_xlabel("Lag time (frames)")
+    axes[0].set_ylabel("TAMSD (px²)")
+    # axes[0].set_xscale("log")
+    # axes[0].set_yscale("log")
+
+    if trajs_gt is not None:
+        axes[1].set_title("Ground Truth Trajectories")
+        axes[1].set_xlabel("Lag time (frames)")
+        # axes[1].set_xscale("log")
+        # axes[1].set_yscale("log")
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 
 
@@ -2039,4 +2192,4 @@ def make_list(trajs_from_graph, test_graph, fov_size):
         # Optionally sort by frame if not ordered
         traj = traj[np.argsort(traj[:, 0])]
         trajs_list.append(traj)
-    return trajs_listxs
+    return trajs_list
