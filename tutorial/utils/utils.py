@@ -2012,7 +2012,7 @@ class ComputeTrajectories:
         return pruned_edges
 
 
-def make_list(trajs_from_graph, test_graph):
+def make_list(trajs_from_graph, test_graph, fov_size):
     """
     Convert MAGIK trajectories from graph format to a list of NumPy arrays,
     where each array is shaped (T, 3) with [frame, y, x] rows.
@@ -2033,7 +2033,7 @@ def make_list(trajs_from_graph, test_graph):
     trajs_list = []
     for t in trajs_from_graph:
         frames = test_graph.frames[list(t)].cpu().numpy()
-        coords = test_graph.x[list(t)].cpu().numpy() * sim_image_size # shape (T, 2), assumed [x, y]
+        coords = test_graph.x[list(t)].cpu().numpy() * fov_size # shape (T, 2), assumed [x, y]
         # Flip to [y, x] and concatenate with frames
         traj = np.column_stack((frames, coords[:, 0], coords[:, 1]))
         # Optionally sort by frame if not ordered
