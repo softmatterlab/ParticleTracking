@@ -30,6 +30,22 @@ Key Features
 
 Module Structure
 ----------------
+Classes:
+
+    - `GraphFromTrajectories`: Creates a graph representation of a video.
+
+    - `GraphDataset`: Makes a dataset in torch-format for training. 
+
+    - `RandomRotation`: Rotates graph features, used in training.
+
+    - `RandomFlip`: Flips graph features, used in training.
+
+    - `NodeDropout`: Randomly removes nodes during training.
+
+    - `ComputeTrajectories`: Calculates trajectories from MAGIK output.
+
+
+
 Methods:
 
     - `create_ground_truth_map`: Creates probability density.
