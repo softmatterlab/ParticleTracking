@@ -1,4 +1,4 @@
-"""Visualization and nalysis utilities for particle tracking data.
+"""Visualization and analysis utilities for particle tracking data.
 
 This module provides a collection of utility functions for visualizing and 
 analyzing particle tracking data. It supports operations such as interactive 
@@ -8,22 +8,29 @@ quantitative trajectory analysis.
 Key Features
 ------------
 - Display video data interactively in Jupyter notebooks.
-- Convert and visualize image crops, masks, and ground truth maps.
-- Overlay predicted and ground truth trajectories on video frames.
-- Interactively measure distances in an image with a virtual ruler.
+
 - Visualize matched/unmatched trajectories and TAMSD curves.
 
 Module Structure
 ----------------
 Functions:
+
 - `play_video`: Display a video stack in Jupyter notebooks.
+
 - `convert_uint8`: Convert video frames to uint8 format.
+
 - `plot_crops`: Plot crops from a dataset in a grid layout.
+
 - `interactive_ruler`: Draw lines on an image and calculate their lengths.
+
 - `plot_image_mask_ground_truth_map`: Plot an image with its mask and ground truth map.
+
 - `plot_predicted_positions`: Overlay predicted and ground truth positions on an image.
+
 - `make_video_with_trajs`: Generate a video with overlaid trajectories.
+
 - `plot_trajectory_matches`: Visualize matched and unmatched trajectories.
+
 - `plot_TAMSDs`: Plot the TAMSD curves for predicted and ground truth trajectories.
 
 """
@@ -443,7 +450,7 @@ def plot_predicted_positions(**kwargs: dict) -> None:
         # Scatter plot of the ground truth positions
         plt.scatter(
             *gt_positions.T,
-            s=10,
+            s=14,
             c="b",
             marker="x",
             label="Ground truth",
@@ -461,7 +468,7 @@ def plot_predicted_positions(**kwargs: dict) -> None:
         # Scatter plot of the predicted positions.
         plt.scatter(
             *pred_positions.T,
-            s=10,
+            s=14,
             c="r",
             marker=".",
             label="Predicted positions",

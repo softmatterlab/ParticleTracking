@@ -1,5 +1,4 @@
-"""
-Image Preprocessing Utilities
+"""Image preprocessing utilities.
 
 This module provides utility functions for image normalization, padding, 
 mask processing, and formatting for use in machine learning pipelines, 

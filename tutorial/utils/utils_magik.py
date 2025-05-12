@@ -5,11 +5,11 @@ representations of particle motion, particularly for use with the MAGIK tracking
 
 Key Features
 ------------
-- **Graph creation from particle trajectories**
+- Graph creation from particle trajectories.
 
-- **Dataset generation and augmentation for training**
+- Dataset generation and augmentation for training.
 
-- **Trajectory reconstruction from predicted graph edges**
+- Trajectory reconstruction from predicted graph edges.
 
 Module Structure
 -----------------
@@ -28,7 +28,7 @@ Classes:
 
 - `ComputeTrajectories`: Calculates trajectories from MAGIK output.
 
-Methods:
+Functions:
 
 - `make_list`: Converts MAGIK trajectories from graph format to a list of 
     NumPy arrays.

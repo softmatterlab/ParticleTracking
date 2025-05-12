@@ -148,10 +148,10 @@ def trajectory_sqdistance(
     Parameters
     ----------
     gt: np.ndarray
-        ground truth trajectory.
+        Ground truth trajectory.
 
     pred: np.ndarray
-        Predicted trajectory
+        Predicted trajectory.
 
     eps: int
         The radius of each particle in pixels.
@@ -190,8 +190,8 @@ def trajectory_sqdistance(
 
 
 def trajectory_assignment(
-    gt: np.ndarray,
-    pred: np.ndarray,
+    gt: list[np.ndarray],
+    pred: list[np.ndarray],
     eps: int = 5,
 )-> tuple[tuple[np.ndarray, np.ndarray], np.ndarray, float]:
     """Compute the squared distances between all trajectories.
@@ -204,10 +204,10 @@ def trajectory_assignment(
 
     Parameters
     ----------
-    gt: np.ndarray
+    gt: list[np.ndarray]
         Array of ground truth trajectories.
 
-    pred: np.ndarray
+    pred: list[np.ndarray]
         Array of predicted trajectories.
     
     eps: int, optional
@@ -227,10 +227,11 @@ def trajectory_assignment(
     cost_matrix = np.zeros((len(gt), len(pred)))
     len_matrix = np.zeros((len(gt), len(pred)))
 
-    for idxg, gt in enumerate(gt):
-        dmax += len(gt) * eps ** 2
-        for idxp, pred in enumerate(pred):
-            cost_matrix[idxg, idxp], len_matrix[idxg, idxp] = trajectory_sqdistance(gt,pred,eps)
+    for idxg, gt_traj in enumerate(gt):
+        dmax += len(gt_traj) * eps ** 2
+        for idxp, pred_traj in enumerate(pred):
+            cost_matrix[idxg, idxp], len_matrix[idxg, idxp] = trajectory_sqdistance(gt_traj, pred_traj, eps)
+
     
     # cost_matrix computed earlier
     row_ind, col_ind = linear_sum_assignment(cost_matrix/len_matrix)
@@ -246,9 +247,9 @@ def trajectory_assignment(
 
 
 def trajectory_metrics(
-    gt: np.ndarray,
-    pred: np.ndarray,
-    eps=5,
+    gt: list[np.ndarray],
+    pred: list[np.ndarray],
+    eps: int = 5,
 ):
     """Computes tracking performance metrics.
 
@@ -258,9 +259,9 @@ def trajectory_metrics(
     
     Parameters
     ----------
-    gt: np.ndarray
+    gt: list[np.ndarray]
         Array of ground truth trajectories.
-    pred: np.ndarray
+    pred: list[np.ndarray]
         Array of predicted trajectories.
     eps: int, optional
         Defines the threshold for calculating squared distances and can be
@@ -285,11 +286,6 @@ def trajectory_metrics(
         complement = [pred[i] for i in range(len(pred)) if i not in matched_indices]
         for c in complement:
             dFP += len(c) * eps**2
-        # complement = pred
-        # for i in trajectory_pair[1]:
-        #     complement = np.delete(complement,i)
-        # for c in complement:
-        #     dFP += len(c) * eps**2
     alpha = 1.0 - d / dmax
     beta = (dmax - d) / (dmax + dFP)
 
