@@ -60,7 +60,7 @@ Associate localized particles across frames to reconstruct trajectories using:
 
 Tutorial:
 
-- [Tracking Spheres](tutorial/linking/spheres/linking_spheres.ipynb)  
+- [Linking Spheres](tutorial/linking/spheres/linking_spheres.ipynb)  
   [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cmanzo/tracking-softmatter/blob/main/tutorial/linking/spheres/linking_spheres.ipynb)
 
 <p align="left">
