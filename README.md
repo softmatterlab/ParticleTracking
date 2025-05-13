@@ -1,76 +1,150 @@
-# Particle Tracking Tutorial
+# Tracking Soft Matter
 
-> This tutorial is intended for experimentalists who wish to expand
-> their toolset in analyzing experimental data without an excessive focus
-> on writing code. The notebooks are designed with a plug-and-play approach in mind,
-> where most of the utility functions and classes are declared in a separate file in order to keep a clear flow of
-> information throughout, with a focus on results.
+**Tracking Soft Matter** offers a modular set of Jupyter notebooks to help experimentalists and researchers analyze microscopy data with minimal coding effort. The tutorials are designed to be accessible, with well-structured utility modules and clear workflows.
 
+---
 
-The tutorial is divided into two main parts: [**Particle Detection**](https://github.com/aarondomenzain/tracking-softmatter-aarond/tree/tracking-softmatter-aarond-dev/tutorial/detection) and [**Particle Tracking**](https://github.com/aarondomenzain/tracking-softmatter-aarond/tree/tracking-softmatter-aarond-dev/tutorial/tracking), with categories of different types of experimental data therein. 
+## Overview
 
-## What to expect 
+This repository supports the full pipeline for particle tracking:
 
-The tutorial showcases a handful of conventional methods of detection and tracking with varying complexities of implementations. Threshholding for example, is very easy to implement but requires the data to be clean and simple. 
+- **Detection** – Identify and localize particles using both classical and deep learning methods.
+- **Linking** – Associate particles across time frames to reconstruct trajectories.
+- **Simulation** - Generate realistic dataset for training and evaluation.
+- **Evaluation** – Compare predictions to ground truth using tracking metrics.
+- **Visualization** – Animate and inspect results interactively.
 
-We show how to generate synthetic data with `DeepTrack2` in order to train the Deep Learning models, but also included are pre-trained weights which lets you skip training.
+---
 
-## Getting started
+## Tutorials
 
-1.  Download the repository or clone it directly by typing  ```git clone https://github.com/aarondomenzain/tracking-softmatter-aarond.git``` in a terminal. 
+The tutorials are organized into two main parts: **Detection & Localization** and **Linking**.
 
-2. Ensure you are using ``Python version 3.9-3.12``.
-   
-3. Install the required packages with the following command: ```pip install deeptrack deeplay imageio ipykernel ipywidgets laptrack matplotlib numpy opencv-python scikit-image scipy torch trackpy```
+### Detection & Localization
 
+You will apply and compare several detection strategies:
 
-### **Detection**
+1. **Thresholding & Connected Components** – Simple and fast.
+2. **Crocker–Grier (TrackPy)** – Classical approach to particle tracking.
+3. **U-Net** – Supervised deep learning for segmentation.
+4. **LodeSTAR** – Unsupervised deep learning for subpixel localization.
 
-The **Detection** part of the tutorial guides the user through the process of applying four different object detection methods, they are ordered as:
+Each method is benchmarked on simulated data and then applied to experimental datasets.
 
-1. **Thresholding** with `NumPy`
-2. **Crocker-Grier** with `TrackPy`
-3. **U-Net detection** with `Deeplay`
-4. **LodeSTAR detection** with `Deeplay`
+Tutorials:
 
-These object detection methods are applied to simulated data in order to obtain a performance metric and then in turn applied to experimental data.
+- [Detection of Spheres](tutorial/detection/spheres/detection_spheres.ipynb)  
+  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cmanzo/tracking-softmatter/blob/main/tutorial/detection/spheres/detection_spheres.ipynb)
 
-There are three notebook variations of the **Detection** part, accounting for different particle geometries:
+- [Detection of Core-Shell Spheres](tutorial/detection/core-shell%20spheres/detection_core-shell.ipynb)  
+  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cmanzo/tracking-softmatter/blob/main/tutorial/detection/core-shell%20spheres/detection_core-shell.ipynb)
 
-1. Detection of **Spheres**: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/aarondomenzain/tracking-softmatter-aarond/blob/tracking-softmatter-aarond-dev/tutorial/detection/spheres/detection_spheres.ipynb)
-
-2. Detection of **Core-Shell Spheres**: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/aarondomenzain/tracking-softmatter-aarond/blob/tracking-softmatter-aarond-dev/tutorial/detection/core-shell%20spheres/detection_core-shell.ipynb)
-
-3. Detection of **Ellipses**: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/aarondomenzain/tracking-softmatter-aarond/blob/tracking-softmatter-aarond-dev/tutorial/detection/ellipses/detection_ellipses.ipynb)
-   
-If you wish to run the detection notebooks in Google Colab, you will need to upload the [utils.py](https://github.com/aarondomenzain/tracking-softmatter-aarond/blob/tracking-softmatter-aarond-dev/tutorial/detection/utils.py) file to your session.
-
-The different types of data can be previewed in the figures below.
-<p align="left">
-  <img width="200" src=/assets/fig1.png?raw=true>
-  <img width="200" src=/assets/fig2.png?raw=true>
-  <img width="200" src=/assets/fig3.png?raw=true>
-<br/>
-
-### **Tracking**[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/aarondomenzain/tracking-tracking-softmatter-aarond-dev/tutorial/tracking/tracking_spheres.ipynb)
-
-The **Tracking** part of the tutorial is to guide through the process of applying different tracking methods to simulated and experimental data.
-
-If you wish to run the tracking notebook in Google Colab, you will need to upload the [utils_tracking.py](https://github.com/aarondomenzain/tracking-softmatter-aarond/blob/tracking-softmatter-aarond-dev/tutorial/tracking/utils_tracking.py) file to your session.
-
-!pip install deeptrack deeplay laptrack trackpy -q 
-
-The methods used in the tracking tutorial are:
-
-1. **Modified Crocker-Grier** with `TrackPy`
-2. **Hungarian algorithm** with `LapTrack`
-3. **MAGIK** with `Deeplay`
-
-The results from these methods are then evaluated with performance metrics and displayed as movies. 
+- [Detection of Ellipses](tutorial/detection/ellipses/detection_ellipses.ipynb)  
+  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cmanzo/tracking-softmatter/blob/main/tutorial/detection/ellipses/detection_ellipses.ipynb)
 
 <p align="left">
-  <img width="400" src=/assets/track.gif?raw=true>
-<br/>
+  <img width="200" src="assets/fig1.png?raw=true">
+  <img width="200" src="assets/fig2.png?raw=true">
+  <img width="200" src="assets/fig3.png?raw=true">
+</p>
 
+---
 
+### Linking
 
+Associate localized particles across frames to reconstruct trajectories using:
+
+1. **Nearest-neighbor linking (TrackPy)**.
+2. **Linear Assignment Problem (LAP) using Hungarian algorithm (LapTrack)**.
+3. **Graph-based deep learning linker (MAGIK, via `deeplay`)**.
+
+Tutorial:
+
+- [Linking Spheres](tutorial/linking/spheres/linking_spheres.ipynb)  
+  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cmanzo/tracking-softmatter/blob/main/tutorial/linking/spheres/linking_spheres.ipynb)
+
+<p align="left">
+  <img width="400" src="assets/track.gif?raw=true">
+</p>
+
+---
+
+## Getting Started
+
+1. **Clone the repository:**
+
+```bash
+git clone https://github.com/cmanzo/tracking-softmatter.git
+cd tracking-softmatter
+```
+
+2. **Install dependencies:**
+
+```bash
+pip install -r requirements.txt
+```
+
+3. **Launch the tutorials:**
+
+```bash
+jupyter lab  # or jupyter notebook
+```
+
+---
+
+## Using `utils/` in Google Colab
+
+The tutorials rely on the utility modules stored in the `utils/` folder.
+
+### Option 1: Clone the full repository (recommended)
+
+```python
+!git clone https://github.com/cmanzo/tracking-softmatter.git
+%cd tracking-softmatter
+```
+
+### Option 2: Upload the `utils/` folder manually
+
+Upload a zipped copy of `utils/`:
+
+```python
+from google.colab import files
+uploaded = files.upload()  # Upload utils.zip
+```
+
+Unzip it:
+
+```bash
+!unzip utils.zip -d .
+```
+
+Then import as usual:
+
+```python
+from utils import detection_utils, tracking_utils, video_utils
+```
+
+---
+
+## Dependencies
+
+Core libraries:
+
+- `numpy`, `scipy`, `matplotlib`
+- `scikit-image`, `torch`
+- `trackpy`, `laptrack`, `deeptrack`, `deeplay`
+
+See `requirements.txt` for full details.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+---
+
+## Citation
+
+If you use this toolkit for your research, please cite:  
+*(BibTeX and citation information coming soon)*
