@@ -232,7 +232,7 @@ def transform_to_video(
     # Sequential definition of particles with changing positions per frame.
     sequential_inner_particle = dt.Sequential(
         inner_particle,
-        position=lambda trajectory, sequence_step: trajectory[sequence_step],
+        position=lambda trajectory, sequence_index: trajectory[sequence_index],
     )
 
 #   Check if shell particle properties are provided.
@@ -253,7 +253,7 @@ def transform_to_video(
 
         sequential_outer_particle = dt.Sequential(
             outer_particle,
-            position=lambda trajectory, sequence_step: trajectory[sequence_step],
+            position=lambda trajectory, sequence_index: trajectory[sequence_index],
         )
 
         combined_particle = (
