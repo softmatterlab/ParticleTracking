@@ -375,7 +375,7 @@ def create_ground_truth_map(
     
     # Optional sanity check: warn if sigma looks suspiciously large
     if pixel_size_nm is not None:
-        sigma /= pixel_size_nm
+        sigma = sigma / pixel_size_nm
         
     # Assign Gaussian variance to each semiaxis.
     # Equal variance corresponds to a circular Gaussian.
