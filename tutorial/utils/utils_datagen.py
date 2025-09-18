@@ -616,6 +616,8 @@ def simulate_Brownian_trajs(
     trajs = np.zeros((num_timesteps, num_particles, 3), dtype=float)
     # Set initial frame
     trajs[0, :, :2] = initial_pos
+    # Third axis corresponds to rotation angle, which is set to zero due to 
+    # spherical symmetry of particles.
     trajs[0, :, 2] = 0
 
     # Generate all random increments at once
