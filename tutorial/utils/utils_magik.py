@@ -101,17 +101,17 @@ class GraphFromTrajectories:
     
     def get_connectivity(
         self: "GraphFromTrajectories", 
-        node_attr: np.ndarray, 
-        frames: np.ndarray
+        positions: np.ndarray, 
+        frame_indices: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """Compute connectivity of the graph.
 
         Parameters
         ----------
-        node_attr : np.ndarray
+        positions : np.ndarray
             The attributes of the nodes in the graph, typically the coordinates
             of the particles.
-        frames : np.ndarray
+        frame_indices : np.ndarray
             The frame indices corresponding to the nodes in the graph.
         
         Returns
@@ -123,19 +123,31 @@ class GraphFromTrajectories:
             nodes.
 
         """
+        edges = []          
+        edge_distances = [] 
+        num_nodes = len(positions)
         
-        xy = node_attr  
-        
-        distances = np.linalg.norm(xy[:, None] - xy, axis=-1)
-        frame_diff = (frames[:, None] - frames) * -1
-        mask = ((distances < self.connectivity_radius) 
-                & (frame_diff <= self.max_frame_distance)
-                & (frame_diff > 0)
-        )
+        for node_idx in range(num_nodes):
+            node_frame = frame_indices[node_idx]
 
-        edge_index = np.argwhere(mask)
-        edge_attr = distances[mask]
-        return edge_index, edge_attr
+            for neighbor_idx in range(node_idx + 1, num_nodes):
+                neighbor_frame = frame_indices[neighbor_idx]
+                frame_gap = neighbor_frame - node_frame
+
+                if frame_gap <= 0:
+                    continue
+                if frame_gap > self.max_frame_distance:
+                    break
+                distances = np.linalg.norm(positions[node_idx] - positions[neighbor_idx])
+
+                if distances < self.connectivity_radius:
+                    edges.append([node_idx, neighbor_idx])
+                    edge_distances.append(distances)
+        
+        edges = np.array(edges, dtype=np.int64)
+        edge_distances = np.array(edge_distances, dtype=np.float32)
+                                  
+        return edges, edge_distances
     
     def get_gt_connectivity(
         self: "GraphFromTrajectories", 
@@ -661,3 +673,41 @@ def make_list(trajs_from_graph, test_graph, fov_size):
         traj = traj[np.argsort(traj[:, 0])]
         trajs_list.append(traj)
     return trajs_list
+
+    def old_get_connectivity(
+        self: "GraphFromTrajectories", 
+        node_attr: np.ndarray, 
+        frames: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Compute connectivity of the graph. (Legacy version)
+
+        Parameters
+        ----------
+        node_attr : np.ndarray
+            The attributes of the nodes in the graph, typically the coordinates
+            of the particles.
+        frames : np.ndarray
+            The frame indices corresponding to the nodes in the graph.
+        
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            A tuple containing the edge indices and edge attributes of the 
+            graph. The edge indices represent the connectivity between nodes, 
+            and the edge attributes represent the distances between connected 
+            nodes.
+
+        """
+        
+        xy = node_attr  
+        
+        distances = np.linalg.norm(xy[:, None] - xy, axis=-1)
+        frame_diff = (frames[:, None] - frames) * -1
+        mask = ((distances < self.connectivity_radius) 
+                & (frame_diff <= self.max_frame_distance)
+                & (frame_diff > 0)
+        )
+
+        edge_index = np.argwhere(mask)
+        edge_attr = distances[mask]
+        return edge_index, edge_attr
