@@ -375,7 +375,7 @@ def create_ground_truth_map(
     
     # Optional sanity check: warn if sigma looks suspiciously large
     if pixel_size_nm is not None:
-        sigma /= pixel_size_nm
+        sigma = sigma / pixel_size_nm
         
     # Assign Gaussian variance to each semiaxis.
     # Equal variance corresponds to a circular Gaussian.
@@ -616,6 +616,8 @@ def simulate_Brownian_trajs(
     trajs = np.zeros((num_timesteps, num_particles, 3), dtype=float)
     # Set initial frame
     trajs[0, :, :2] = initial_pos
+    # Third axis corresponds to rotation angle, which is set to zero due to 
+    # spherical symmetry of particles.
     trajs[0, :, 2] = 0
 
     # Generate all random increments at once

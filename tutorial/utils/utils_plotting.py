@@ -490,6 +490,7 @@ def make_video_with_trajs(
     video,
     fov_size,
     trajs_gt_list=None,
+    figure_title=None
 ) -> HTML:
     """Generate video with predicted (and optionally ground truth) trajectories.
 
@@ -515,52 +516,78 @@ def make_video_with_trajs(
         HTML5 video displaying overlaid trajectories.
     """
     fig, ax = plt.subplots(figsize=(5, 5))
+    ax.set_xlim([0, fov_size])
+    ax.set_ylim([fov_size, 0])  # invert y-axis
+    ax.set_xticks([]), ax.set_yticks([])
+    ax.tick_params(left=False, bottom=False)
+    if figure_title is not None:
+        ax.set_title(figure_title)
+
+    # Image artist (static background per frame)
+    im = ax.imshow(video[0], cmap="gray", animated=True)
+
+    # Predicted trajectories: one line + one scatter (last point) per traj
+    pred_lines, pred_scatters = [], []
+    for _ in trajs_pred_list:
+        line, = ax.plot([], [], color="w", linewidth=0.5, animated=True)
+        scatter = ax.scatter([], [], s=100, facecolors="none", edgecolors="r",
+                             marker="o", linewidths=1, animated=True)
+        pred_lines.append(line)
+        pred_scatters.append(scatter)
+
+    # Ground truth (optional)
+    gt_scatters = []
+    if trajs_gt_list is not None:
+        for _ in trajs_gt_list:
+            scatter = ax.scatter([], [], color="c", s=90, marker="+",
+                                 linewidths=1, animated=True)
+            gt_scatters.append(scatter)
+
+    # Legend (static, only drawn once)
+    legend_handles = [
+        mlines.Line2D([], [], color="r", marker="o", linestyle="None",
+                      markerfacecolor="none", label="Prediction")
+    ]
+    if trajs_gt_list is not None:
+        legend_handles.append(
+            mlines.Line2D([], [], color="c", marker="+", linestyle="None",
+                          label="Ground Truth")
+        )
+    ax.legend(handles=legend_handles, loc="upper left")
 
     def update(frame_idx):
-        ax.clear()
-        ax.imshow(video[frame_idx], cmap="gray")
-        ax.set_xlim([0, fov_size])
-        ax.set_ylim([fov_size, 0])  # Invert y-axis
-        ax.set_xticks([]), ax.set_yticks([])
-        ax.tick_params(left=False, bottom=False)
+        # Update video frame
+        im.set_array(video[frame_idx])
 
-        # Plot predicted trajectories
-        for traj in trajs_pred_list:
+        # Update predicted trajectories
+        for traj, line, scatter in zip(trajs_pred_list, pred_lines, pred_scatters):
             t = traj[traj[:, 0] <= frame_idx]
             if len(t) > 0:
-                ax.plot(t[:, 2], t[:, 1], color="w", linewidth=0.5)
-                ax.scatter(
-                    t[-1, 2], t[-1, 1],
-                    s=100, facecolors="none", edgecolors="r",
-                    marker="o", linewidths=1
-                )
+                line.set_data(t[:, 2], t[:, 1])
+                scatter.set_offsets([[t[-1, 2], t[-1, 1]]])
+            else:
+                line.set_data([], [])
+                scatter.set_offsets(np.empty((0, 2))) 
 
-        legend_handles = [
-            mlines.Line2D([], [], color="r", marker="o", linestyle="None",
-                          markerfacecolor="none", label="Prediction")
-        ]
-
-        # Plot ground truth trajectories if provided
+        # Update GT trajectories
         if trajs_gt_list is not None:
-            for traj in trajs_gt_list:
+            for traj, scatter in zip(trajs_gt_list, gt_scatters):
                 t = traj[traj[:, 0] <= frame_idx]
                 if len(t) > 0:
-                    ax.scatter(
-                        t[-1, 2], t[-1, 1],
-                        color="c", s=90, marker="+", linewidths=1
-                    )
-            legend_handles.append(
-                mlines.Line2D([], [], color="c", marker="+", linestyle="None",
-                              label="Ground Truth")
-            )
+                    scatter.set_offsets([[t[-1, 2], t[-1, 1]]])
+                else:
+                    scatter.set_offsets(np.empty((0, 2))) 
 
-        ax.legend(handles=legend_handles, loc="upper left")
-        return ax
+        return [im] + pred_lines + pred_scatters + gt_scatters
 
-    anim = animation.FuncAnimation(fig, update, frames=len(video))
+
+    anim = animation.FuncAnimation(
+        fig, update, frames=len(video), blit=True, interval=50
+    )
     video_html = HTML(anim.to_jshtml())
     plt.close(fig)
     return video_html
+
 
 
 def plot_trajectory_matches(
