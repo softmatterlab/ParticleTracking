@@ -539,9 +539,9 @@ class NodeDropout:
 
         # Compute connectivity matrix to dropped nodes.
         for dropped_node in dropped_idx:
-        edges_connected_to_removed_node = np.any(
-            np.array(graph.edge_index) == dropped_node, axis=0
-        )
+            edges_connected_to_removed_node = np.any(
+                np.array(graph.edge_index) == dropped_node, axis=0
+            )
 
         # Remove edges, weights, labels connected to dropped nodes with the
         # bitwise not operator '~'.
