@@ -1,6 +1,6 @@
-# Tracking Soft Matter
+# Particle Tracking for Soft Matter
 
-**Tracking Soft Matter** offers a modular set of Jupyter notebooks to help experimentalists and researchers analyze microscopy data with minimal coding effort. The tutorials are designed to be accessible, with well-structured utility modules and clear workflows.
+**Tracking Tracking for Soft Matter** offers a modular set of Jupyter notebooks to help experimentalists and researchers analyze microscopy data with minimal coding effort. The tutorials are designed to be accessible, with well-structured utility modules and clear workflows.
 
 ---
 
@@ -74,8 +74,8 @@ Tutorial:
 1. **Clone the repository:**
 
 ```bash
-git clone https://github.com/cmanzo/tracking-softmatter.git
-cd tracking-softmatter
+git clone https://github.com/softmatterlab/ParticleTracking.git
+cd ParticleTracking
 ```
 
 2. **Install dependencies:**
@@ -99,8 +99,8 @@ The tutorials rely on the utility modules stored in the `utils/` folder.
 ### Option 1: Clone the full repository (recommended)
 
 ```python
-!git clone https://github.com/cmanzo/tracking-softmatter.git
-%cd tracking-softmatter
+!git clone https://github.com/softmatterlab/ParticleTracking.git
+%cd ParticleTracking
 ```
 
 ### Option 2: Upload the `utils/` folder manually
