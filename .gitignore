@@ -21,3 +21,4 @@ UNet_model_core-shell.pth
 UNet_reg_core-shell.pth
 .DS_Store
 >>>>>>> aaron/tracking-softmatter-aarond-dev
+pt/
