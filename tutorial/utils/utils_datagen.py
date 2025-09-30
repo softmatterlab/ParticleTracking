@@ -30,29 +30,25 @@ Module Structure
 - `traj_break` : Split trajectories based on discontinuities or FOV exits.
 
 
-=============================================================================
-Spatial Quantities and Units
-=============================================================================
+NOTE: Spatial Quantities and Units
+----------------------------------
 All spatial quantities (e.g. radius, sigma, position) are internally expected 
 and processed in **pixels**. However, most functions provide an optional 
 `pixel_size_nm` argument (default: 100 nm) to allow input in nanometers.
 If `pixel_size_nm` is specified, physical quantities will be automatically 
 converted to pixel units. Set `pixel_size_nm=None` to disable conversion 
 and use raw pixel units directly.
-=============================================================================
 
 """
 
 from __future__ import annotations
 
+import deeptrack as dt
 import numpy as np
-import math
-import matplotlib.pyplot as plt
-import deeptrack as dt 
 
 def generate_centroids(
-    num_particles: int, 
-    fov_size: int, 
+    num_particles: int,
+    fov_size: int,
     particle_radius: int = None,
     pixel_size_nm: float = 100,
     max_attempts: int = 1000,
@@ -77,28 +73,29 @@ def generate_centroids(
     Returns
     -------
     np.ndarray
-        Array of shape (M, 3) with rows [x, y, theta], where M <= num_particles.
-        Theta is sampled uniformly in [-pi, pi].
+        Array of shape (M, 3) with rows [x, y, theta], where M<=num_particles
+        and theta is sampled uniformly in [-pi, pi].
 
     """
-    # Convert radius from nm to pixels if needed
+
+    # Convert radius from nm to pixels if needed.
     if particle_radius is not None and pixel_size_nm is not None:
         particle_radius = particle_radius / pixel_size_nm
 
-    # Margin ensures particles stay fully inside image
+    # Margin ensures particles stay fully inside image.
     margin = float(particle_radius) if particle_radius is not None else 0.0
     min_distance = 2 * margin if particle_radius is not None else 0.0
 
-    # Sample positions
+    # Sample positions.
     if particle_radius is None:
-        # No-overlap: simple uniform sampling
+        # No-overlap: simple uniform sampling.
         positions = np.random.uniform(
             low=margin,
             high=fov_size - margin,
             size=(num_particles, 2)
         )
     else:
-        # Rejection sampling with minimum distance
+        # Rejection sampling with minimum distance.
         placed = []
         attempts = 0
         while len(placed) < num_particles and attempts < max_attempts:
@@ -107,23 +104,23 @@ def generate_centroids(
                 high=fov_size - margin,
                 size=2
             )
-            if all(np.linalg.norm(candidate - p) >= min_distance for p in placed):
+            if all(np.linalg.norm(candidate - p) >= min_distance
+                   for p in placed):
                 placed.append(candidate)
             attempts += 1
 
         if not placed:
-            # Return empty array if placement failed completely
+            # Return empty array if placement failed completely.
             return np.empty((0, 3))
 
         positions = np.vstack(placed)
 
-    # Sample random orientation angles in [-pi, pi]
+    # Sample random orientation angles in [-pi, pi].
     thetas = np.random.uniform(-np.pi, np.pi, size=(positions.shape[0], 1))
 
-    # Combine into final array
+    # Combine into final array.
     centroids = np.hstack((positions, thetas))
     return centroids
-
 
 def transform_to_video(
     trajs: np.ndarray,
@@ -171,7 +168,7 @@ def transform_to_video(
         The generated video frames as a NumPy array.
         
     """
-    
+
     # Initialize defaults if not provided.
     core_particle_props = core_particle_props or {}
     shell_particle_props = shell_particle_props or {}
@@ -185,9 +182,9 @@ def transform_to_video(
 
     # Default background properties.
     _background_dict = {
-        "background_mean": 0,  # Mean background intensity.
-        "background_std": 0,  # Std. dev. of background noise.
-        "poisson_snr": 100,  # Signal-to-noise ratio for Poisson noise.
+        "background_mean": 0,  # Mean background intensity
+        "background_std": 0,  # Std. dev. of background noise
+        "poisson_snr": 100,  # Signal-to-noise ratio for Poisson noise
     }
 
     # Update the default dictionaries with user-defined properties.
@@ -196,10 +193,10 @@ def transform_to_video(
     _background_dict.update(background_props)
 
     # Reshape trajectory data to fit expected input format.
-    # Add third axis (frame) if not present. 
+    # Add third axis (frame) if not present.
     if len(trajs.shape) == 2:
-        trajs = trajs[np.newaxis, :]  # Add a new axis.
-    
+        trajs = trajs[np.newaxis, :]  # Add a new axis
+
     # Check if trajectory data has 3 axis (X, Y, angle).
     if trajs.shape[-1] == 3:
 
@@ -212,8 +209,8 @@ def transform_to_video(
         angles = np.zeros([trajs[-1].shape[0], 1])
 
     # The desired format is (N, frames, dim), with dim the spatial dimensions.
-    trajs = np.moveaxis(trajs, 0, 1)  # Swap axis.
-    
+    trajs = np.moveaxis(trajs, 0, 1)  # Swap axis
+
     # Generate inner particle (core).
     inner_particle = dt.Ellipsoid(
         trajectories=trajs,
@@ -224,8 +221,8 @@ def transform_to_video(
         traj_length=trajs.shape[1],
         position=lambda trajectory: trajectory[0],
         angles_list=angles,
-        rotation = lambda replicate_index, angles_list: angles_list[
-            replicate_index],
+        rotation=\
+            lambda replicate_index, angles_list: angles_list[replicate_index],
         **_core_particle_dict,
     )
 
@@ -235,7 +232,7 @@ def transform_to_video(
         position=lambda trajectory, sequence_step: trajectory[sequence_step],
     )
 
-#   Check if shell particle properties are provided.
+    # Check if shell particle properties are provided.
     if shell_particle_props:
         # Generate outer particle (scaled radius and intensity).
         outer_particle = dt.Ellipsoid(
@@ -253,13 +250,14 @@ def transform_to_video(
 
         sequential_outer_particle = dt.Sequential(
             outer_particle,
-            position=lambda trajectory, sequence_step: trajectory[sequence_step],
+            position=\
+                lambda trajectory, sequence_step: trajectory[sequence_step],
         )
 
         combined_particle = (
             sequential_inner_particle 
             >> sequential_outer_particle
-        )  
+        )
     else:
         combined_particle = sequential_inner_particle
 
@@ -334,7 +332,6 @@ def transform_to_video(
     
     return _video#.__abs__() # Ensure real-valued field.
 
-
 def create_ground_truth_map(
     ground_truth_positions: np.ndarray,
     fov_size: int = 128,
@@ -372,18 +369,18 @@ def create_ground_truth_map(
 
     # Ensure that sigma has non zero dimensions, even though is a scalar.
     sigma = np.atleast_1d(sigma)
-    
-    # Optional sanity check: warn if sigma looks suspiciously large
+
+    # Optional sanity check: warn if sigma looks suspiciously large.
     if pixel_size_nm is not None:
         sigma = sigma / pixel_size_nm
-        
+
     # Assign Gaussian variance to each semiaxis.
     # Equal variance corresponds to a circular Gaussian.
     sigma_x = sigma[0]
     sigma_y = sigma[1] if len(sigma) == 2 else sigma[0]
-    
+
     # Creates a grid of x and y coordinates corresponding to pixel positions in
-    # the image. This grid will be used to compute the Gaussian ground truth 
+    # the image. This grid will be used to compute the Gaussian ground truth
     # map associated to each particle.
     x = np.linspace(0, fov_size - 1, fov_size)
     y = np.linspace(0, fov_size - 1, fov_size)
@@ -391,46 +388,45 @@ def create_ground_truth_map(
 
     # Add a Gaussian for each particle position.
     for pos in ground_truth_positions:
-        
+
         # Checks if positions array includes orientation angles.
         if len(pos) == 3:
             # Reverses X and Y to be consistent with matplotlib order.
             y0, x0, theta = pos 
-        
+
         # If no angles were passed, they are all set to zero.
         else:
             y0, x0 = pos
             theta = 0
-        
-        # Create a 2D Gaussian centered at (x0, y0) and rotated by an angle 
+
+        # Create a 2D Gaussian centered at (x0, y0) and rotated by an angle
         # theta, by defining the rotated semiaxis of the Gaussian, a and b.
         a = 0.5 *  (
             (np.cos(theta) / sigma_x) ** 2 + (np.sin(theta) / sigma_y) ** 2
-            )
+        )
 
         b = 0.25 * (
-            - (
-                np.sin(2 * theta) / sigma_x ** 2
-                ) + (np.sin(2 * theta) / sigma_y ** 2)
-            )
+            - (np.sin(2 * theta) / sigma_x ** 2)
+            + (np.sin(2 * theta) / sigma_y ** 2)
+        )
 
         c = 0.5 * (
             (np.sin(theta) / sigma_x) ** 2 + (np.cos(theta) / sigma_y) ** 2
-            )
-        
+        )
+
         # Insert the rotated semiaxis into the Gaussian blob.
         gaussian = np.exp(
-            -( 
-                (
-                    a * (X - x0) ** 2
-                    ) + 2 * b * (X - x0) * (Y - y0) + c * (Y - y0) ** 2) 
+            - (
+                (a * (X - x0) ** 2)
+                + 2 * b * (X - x0) * (Y - y0)
+                + c * (Y - y0) ** 2
             )
-        
+        )
+
         # Add this Gaussian to the ground truth map.
         ground_truth_map += gaussian
 
     return ground_truth_map
-
 
 def generate_particle_dataset(
     num_samples: int,
@@ -479,18 +475,9 @@ def generate_particle_dataset(
     """
 
     # Preallocate arrays to store all images and ground truth maps.
-    images = np.empty(
-        (num_samples, fov_size, fov_size, 1), 
-        dtype=np.float32
-        )
-    
-    maps = np.empty(
-        (num_samples, 
-         fov_size, 
-         fov_size, 1), 
-        dtype=np.float32,
-        )
-    
+    images = np.empty((num_samples, fov_size, fov_size, 1), dtype=np.float32)
+    maps = np.empty((num_samples, fov_size, fov_size, 1), dtype=np.float32)
+
     # Generate simulated images.
     for i in range(num_samples):
 
@@ -502,21 +489,21 @@ def generate_particle_dataset(
         randomized_num_particles = max(
             1, np.random.randint(0, max_num_particles)
         )
-        
+
          # Extract radius from dictionary.
         particle_radius = core_particle_dict["radius"]
-        
+
         if shell_particle_dict is not None:
             shell_radius = shell_particle_dict["radius"]
         else:
             shell_radius = particle_radius
-        
+
         # Calls variable as a float32 if variable is callable.
         def callable_to_value(z):
             value = z() if callable(z) else z
             value = np.asarray(value, dtype=np.float32)
             return value
-        
+
         # Extract numerical values from callable variables in dictionaries.
         particle_radius = callable_to_value(particle_radius)
         shell_radius = callable_to_value(shell_radius)
@@ -524,13 +511,13 @@ def generate_particle_dataset(
         # Determine which semiaxis is larger.
         max_axis_shell = np.max(shell_radius)
         max_axis_particle = np.max(particle_radius)
-        
+
         # Extract minimum radius in pixel units.
         total_particle_radius = np.maximum(
             max_axis_particle, 
             max_axis_shell
             )
-        
+
         # Size of probability cloud set as the biggest body (pixel units).
         probability_cloud_size = (
             shell_radius if max_axis_shell
@@ -554,7 +541,7 @@ def generate_particle_dataset(
             sigma=probability_cloud_size / 3, 
             pixel_size_nm=pixel_size_nm,
         )
-         
+
         # Convert the ground truth positions to a simulated image.
         _simulated_image = transform_to_video(
             ground_truth_positions,
@@ -564,14 +551,13 @@ def generate_particle_dataset(
             fov_size=fov_size,
             background_props=background_props,
         )
-        
+
         # Store the generated image and ground truth map.
         images[i] = _simulated_image
         maps[i] = _ground_truth_map[:, :, np.newaxis]
-    
+
     print("\nDataset generation complete.")
     return images, maps
-
 
 def simulate_Brownian_trajs(
     num_particles: int,
@@ -597,49 +583,48 @@ def simulate_Brownian_trajs(
     Returns
     -------
     np.ndarray
-        Trajectories array of shape (num_timesteps, num_particles, 3).
-        Each entry [t, i] = [x, y, t], where x,y are positions in [0, fov_size).
+        Trajectories array of shape (num_timesteps, num_particles, 3). Each
+        entry [t, i] = [x, y, t], where x, y are positions in [0, fov_size).
 
     """
-  
-    # Initial positions: uniform in [0, fov_size)
-    # Reuse generate_centroids for even distribution (ignoring orientation)
+
+    # Initial positions: uniform in [0, fov_size).
+    # Reuse generate_centroids for even distribution (ignoring orientation).
     centroids = generate_centroids(
         num_particles=num_particles,
         fov_size=int(fov_size),
         particle_radius = None,
     )
-    # Extract x,y and ignore theta
-    initial_pos = centroids[:, :2]  # shape (num_particles, 2)
+    # Extract x,y and ignore theta.
+    initial_pos = centroids[:, :2]  # Shape (num_particles, 2)
 
-    # Preallocate output: (T, N, 3)
+    # Preallocate output: (T, N, 3).
     trajs = np.zeros((num_timesteps, num_particles, 3), dtype=float)
     # Set initial frame
     trajs[0, :, :2] = initial_pos
-    # Third axis corresponds to rotation angle, which is set to zero due to 
+    # Third axis corresponds to rotation angle, which is set to zero due to
     # spherical symmetry of particles.
     trajs[0, :, 2] = 0
 
-    # Generate all random increments at once
+    # Generate all random increments at once.
     increments = np.random.normal(
         loc=0.0,
         scale=diffusion_std,
         size=(num_timesteps - 1, num_particles, 2)
     )
 
-    # Cumulative sum of increments + initial positions, modulo fov_size
-    # Shape after cumsum: (T-1, N, 2)
+    # Cumulative sum of increments + initial positions, modulo fov_size.
+    # Shape after cumsum: (T-1, N, 2).
     cum_disp = np.cumsum(increments, axis=0)
-    # Broadcast initial positions and wrap
+    # Broadcast initial positions and wrap.
     positions = (cum_disp + initial_pos[np.newaxis, :, :]) % fov_size
 
-    # Fill trajectories for t=1..T-1
+    # Fill trajectories for t = 1 .. T-1.
     trajs[1:, :, :2] = positions
-    # Time coordinate broadcast
+    # Time coordinate broadcast.
     trajs[:, :, 2] = np.arange(num_timesteps)[:, None]
 
     return trajs
-
 
 def traj_break(
     trajs: np.ndarray,
@@ -671,22 +656,23 @@ def traj_break(
     """
 
     trajs_list = []
-    trajs_n = trajs[:, :, [2, 0, 1]] #swap axes, frame first
+    trajs_n = trajs[:, :, [2, 0, 1]]  # swap axes, frame first
     for j in range(num_particles):
         dx = np.abs(trajs[1:, j, 0] - trajs[:-1, j, 0])
         dy = np.abs(trajs[1:, j, 1] - trajs[:-1, j, 1])
 
-        # Identify jumps indicating FOV exit/re-entry
-        jump_indices = np.where((dx > 0.75 * fov_size) | (dy > 0.75 * fov_size))[0]
+        # Identify jumps indicating FOV exit/re-entry.
+        jump_indices = np.where(
+            (dx > 0.75 * fov_size) | (dy > 0.75 * fov_size)
+        )[0]
         boundaries = list(np.unique((-1, len(dx) + 1, *jump_indices)))
 
-        # Split into segments
+        # Split into segments.
         for k in range(len(boundaries) - 1):
             start = boundaries[k] + 1
             end = boundaries[k + 1]
-            if (end - start) >= 5:  # prevent empty slices and shorter than 5
+            if (end - start) >= 5:  # Prevent empty slices and shorter than 5
                 segment = trajs_n[start:end, j, :]
                 trajs_list.append(segment)
-
 
     return trajs_list

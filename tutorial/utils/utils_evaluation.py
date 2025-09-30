@@ -29,16 +29,14 @@ Functions:
 
 - `compute_TAMSD`: Computes time-averaged MSD of a single trajectory.
 
-=============================================================================
-Spatial Quantities and Units
-=============================================================================
+NOTE: Spatial Quantities and Units
+----------------------------------
 All spatial quantities (e.g. radius, sigma, position) are internally expected 
 and processed in **pixels**. However, most functions provide an optional 
 `pixel_size_nm` argument (default: 100 nm) to allow input in nanometers.
 If `pixel_size_nm` is specified, physical quantities will be automatically 
 converted to pixel units. Set `pixel_size_nm=None` to disable conversion 
 and use raw pixel units directly.
-=============================================================================
 
 """
 
@@ -46,9 +44,7 @@ from __future__ import annotations
 
 import numpy as np
 import scipy.spatial
-# import scipy.optimize
 from scipy.optimize import linear_sum_assignment
-
 
 def evaluate_locs(
     pred_positions: np.ndarray, 
@@ -94,10 +90,10 @@ def evaluate_locs(
     # Checks if there is an extra axis accounting for orientation angles.
     if pred_positions.shape[1] == 3:
         pred_positions = pred_positions[:, :2]
-    
+
     if gt_positions.shape[1] == 3:
         gt_positions = gt_positions[:, :2]    
-    
+
     # Compute the pairwise distance matrix.
     distance_matrix = scipy.spatial.distance_matrix(
         pred_positions, 
@@ -149,10 +145,8 @@ def trajectory_sqdistance(
     ----------
     gt: np.ndarray
         Ground truth trajectory.
-
     pred: np.ndarray
         Predicted trajectory.
-
     eps: int
         The radius of each particle in pixels.
 
@@ -162,7 +156,7 @@ def trajectory_sqdistance(
         Squared distance between trajectories.
 
     """
-   
+
     union = np.union1d(
         gt[:, 0],
         pred[:, 0]
@@ -174,7 +168,7 @@ def trajectory_sqdistance(
     )
     gt_i = (gt[:, 0] - union.min()).astype(int)
     pred_i = (pred[:, 0] - union.min()).astype(int)
- 
+
     gt_f = np.full((*ind.shape, 2), np.Inf)
     pred_f = np.full((*ind.shape, 2), np.Inf)
 
@@ -187,7 +181,6 @@ def trajectory_sqdistance(
     d2 = np.minimum(d2, eps**2)
 
     return np.sum(d2), len(ind)
-
 
 def trajectory_assignment(
     gt: list[np.ndarray],
@@ -206,10 +199,8 @@ def trajectory_assignment(
     ----------
     gt: list[np.ndarray]
         Array of ground truth trajectories.
-
     pred: list[np.ndarray]
         Array of predicted trajectories.
-    
     eps: int, optional
         Defines the threshold for calculating squared distances and can be
         used to scale the penalty for mismatches.
@@ -230,9 +221,9 @@ def trajectory_assignment(
     for idxg, gt_traj in enumerate(gt):
         dmax += len(gt_traj) * eps ** 2
         for idxp, pred_traj in enumerate(pred):
-            cost_matrix[idxg, idxp], len_matrix[idxg, idxp] = trajectory_sqdistance(gt_traj, pred_traj, eps)
+            cost_matrix[idxg, idxp], len_matrix[idxg, idxp] = \
+                trajectory_sqdistance(gt_traj, pred_traj, eps)
 
-    
     # cost_matrix computed earlier
     row_ind, col_ind = linear_sum_assignment(cost_matrix/len_matrix)
 
@@ -242,9 +233,9 @@ def trajectory_assignment(
         if cost_matrix[r, c]/len_matrix[r,c] < eps**2:
             valid_matches.append((r, c))
 
-    gt_indices, pred_indices = zip(*valid_matches) if valid_matches else ([], [])
+    gt_indices, pred_indices = \
+        zip(*valid_matches) if valid_matches else ([], [])
     return (np.array(gt_indices), np.array(pred_indices)), cost_matrix, dmax
-
 
 def trajectory_metrics(
     gt: list[np.ndarray],
@@ -283,7 +274,8 @@ def trajectory_metrics(
     dFP = 0.0
     if FP > 0:
         matched_indices = set(trajectory_pair[1])
-        complement = [pred[i] for i in range(len(pred)) if i not in matched_indices]
+        complement = [pred[i] for i in range(len(pred)) 
+                      if i not in matched_indices]
         for c in complement:
             dFP += len(c) * eps**2
     alpha = 1.0 - d / dmax
@@ -309,22 +301,21 @@ def compute_TAMSD(
     ----------
     traj : np.ndarray
         Trajectory of shape (T, 3) in the form [frame, x, y].
-    
     max_lag : int, optional
         Maximum time lag to compute TAMSD for. Defaults to T // 2.
     
     Returns
     -------
-    lags : np.ndarray
-        Time lags used.
-    tamsd : np.ndarray
-        TAMSD values corresponding to each lag.
+    tuple
+        lags : np.ndarray
+            Time lags used.
+        tamsd : np.ndarray
+            TAMSD values corresponding to each lag.
 
     """
 
     if traj.shape[0] < 4:
         return np.array([]), np.array([])
-
 
     frames = traj[:, 0].astype(int)
     coords = traj[:, 1:3]

@@ -23,32 +23,34 @@ Functions:
 
 - `interactive_ruler`: Draw lines on an image and calculate their lengths.
 
-- `plot_image_mask_ground_truth_map`: Plot an image with its mask and ground truth map.
+- `plot_image_mask_ground_truth_map`: Plot an image with its mask and
+    ground-truth map.
 
-- `plot_predicted_positions`: Overlay predicted and ground truth positions on an image.
+- `plot_predicted_positions`: Overlay predicted and ground-truth positions on
+    an image.
 
 - `make_video_with_trajs`: Generate a video with overlaid trajectories.
 
 - `plot_trajectory_matches`: Visualize matched and unmatched trajectories.
 
-- `plot_TAMSDs`: Plot the TAMSD curves for predicted and ground truth trajectories.
+- `plot_TAMSDs`: Plot the TAMSD curves for predicted and ground-truth
+    trajectories.
 
 """
 
 from __future__ import annotations
 
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-import matplotlib.animation as animation
-import matplotlib.lines as mlines
-import matplotlib.backend_bases
 from IPython.display import HTML, display
 from itertools import cycle
+import matplotlib as mpl
+import matplotlib.animation as animation
+import matplotlib.backend_bases
+import matplotlib.lines as mlines
+import matplotlib.pyplot as plt
 import math
+import numpy as np
 
 from .utils_evaluation import compute_TAMSD
-
 
 def play_video(
     video: np.ndarray,
@@ -76,6 +78,7 @@ def play_video(
         Instances a HTML video player with a video.
 
     """
+
     fig = plt.figure(figsize=figsize)
     images = []
     plt.axis("off")
@@ -84,7 +87,9 @@ def play_video(
     vmin, vmax = np.percentile(video, [1, 99])
 
     for image in video:
-        images.append([plt.imshow(image[:, :, 0], cmap="gray", vmin=vmin, vmax=vmax)])
+        images.append(
+            [plt.imshow(image[:, :, 0], cmap="gray", vmin=vmin, vmax=vmax)]
+        )
 
     anim = mpl.animation.ArtistAnimation(
         fig, images, interval=1e3 / fps, blit=True, repeat_delay=0
@@ -93,7 +98,6 @@ def play_video(
     html = HTML(anim.to_jshtml())
     display(html)
     plt.close()
-
 
 def convert_uint8(video: np.ndarray) -> np.ndarray:
     """Converts video to uint8 format.
@@ -109,6 +113,7 @@ def convert_uint8(video: np.ndarray) -> np.ndarray:
         video in uint8 format.
 
     """
+
     converted_video = []
     for idx_im, im in enumerate(video):
         im = im[:, :, 0]
@@ -152,14 +157,14 @@ def plot_crops(
     # Plot the first 12 crops.
     if number_of_crops > 12:
         number_of_crops = 12
-    
+
     # Determine the layout of subplots.
     number_of_columns = 4
     number_of_rows = math.ceil(number_of_crops / number_of_columns)
 
     if number_of_crops <= number_of_columns:
         number_of_rows = 1
-        
+
     # Create a grid of subplots with the specified number of rows and columns.
     fig, axes = plt.subplots(
         number_of_rows,
@@ -182,16 +187,15 @@ def plot_crops(
 
     # Extract the title from the optional keyword argument.
     plot_title = kwargs.get("title", None)
-    
+
     # Display plot title if available.
     if plot_title is not None:
         # Set the title
         fig.suptitle(plot_title, fontsize=20)
-        
+
     # Adjust layout for better spacing.
     plt.tight_layout()
     plt.show()
-    
 
 def interactive_ruler(image: np.ndarray) -> None:
     """Draw lines on an image and calculate their lengths.
@@ -207,8 +211,8 @@ def interactive_ruler(image: np.ndarray) -> None:
             (intensity map).
 
     """
-    
-    # Initialize empty lists to store the coordinates of the lines and their 
+
+    # Initialize empty lists to store the coordinates of the lines and their
     # lengths.
     line_coords = []
     line_lengths = []
@@ -288,7 +292,6 @@ def interactive_ruler(image: np.ndarray) -> None:
     plt.tight_layout()  # Adjust layout to prevent legend from overlapping.
     plt.show()
 
-
 def plot_image_mask_ground_truth_map(**kwargs: dict) -> None:
     """Plot an image with its corresponding mask (optional), ground truth map
     (optional) and title (optional).
@@ -298,21 +301,17 @@ def plot_image_mask_ground_truth_map(**kwargs: dict) -> None:
     **kwargs: dict
         image: 2D array-like, optional.
             The image of the experiment or simulation, displayed in grayscale.
-
         mask: 2D array-like, optional.
             Mask of the image produced by thresholding.
-
         gt_map: 2D array-like, optional.
             2D ground truth map. Gaussians centered at the ground truth 
             position of particles.
 
     Returns
     -------
-
     None
         The function directly plots the image side-by-side with its mask and
         ground truth map.
-
 
     """
 
@@ -361,7 +360,6 @@ def plot_image_mask_ground_truth_map(**kwargs: dict) -> None:
 
     # Show the plot.
     plt.show()
-
 
 def plot_predicted_positions(**kwargs: dict) -> None:
     """Plot an image with predicted and ground truth particle positions.
@@ -484,7 +482,6 @@ def plot_predicted_positions(**kwargs: dict) -> None:
     plt.tight_layout()
     plt.show()
 
-
 def make_video_with_trajs(
     trajs_pred_list,
     video,
@@ -514,19 +511,21 @@ def make_video_with_trajs(
     -------
     IPython.core.display.HTML
         HTML5 video displaying overlaid trajectories.
+
     """
+
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.set_xlim([0, fov_size])
-    ax.set_ylim([fov_size, 0])  # invert y-axis
+    ax.set_ylim([fov_size, 0])  # Invert y-axis
     ax.set_xticks([]), ax.set_yticks([])
     ax.tick_params(left=False, bottom=False)
     if figure_title is not None:
         ax.set_title(figure_title)
 
-    # Image artist (static background per frame)
+    # Image artist (static background per frame).
     im = ax.imshow(video[0], cmap="gray", animated=True)
 
-    # Predicted trajectories: one line + one scatter (last point) per traj
+    # Predicted trajectories: one line + one scatter (last point) per traj.
     pred_lines, pred_scatters = [], []
     for _ in trajs_pred_list:
         line, = ax.plot([], [], color="w", linewidth=0.5, animated=True)
@@ -535,7 +534,7 @@ def make_video_with_trajs(
         pred_lines.append(line)
         pred_scatters.append(scatter)
 
-    # Ground truth (optional)
+    # Ground truth (optional).
     gt_scatters = []
     if trajs_gt_list is not None:
         for _ in trajs_gt_list:
@@ -543,7 +542,7 @@ def make_video_with_trajs(
                                  linewidths=1, animated=True)
             gt_scatters.append(scatter)
 
-    # Legend (static, only drawn once)
+    # Legend (static, only drawn once).
     legend_handles = [
         mlines.Line2D([], [], color="r", marker="o", linestyle="None",
                       markerfacecolor="none", label="Prediction")
@@ -556,11 +555,13 @@ def make_video_with_trajs(
     ax.legend(handles=legend_handles, loc="upper left")
 
     def update(frame_idx):
-        # Update video frame
+        # Update video frame.
         im.set_array(video[frame_idx])
 
-        # Update predicted trajectories
-        for traj, line, scatter in zip(trajs_pred_list, pred_lines, pred_scatters):
+        # Update predicted trajectories.
+        for traj, line, scatter in zip(
+            trajs_pred_list, pred_lines, pred_scatters
+        ):
             t = traj[traj[:, 0] <= frame_idx]
             if len(t) > 0:
                 line.set_data(t[:, 2], t[:, 1])
@@ -588,8 +589,6 @@ def make_video_with_trajs(
     plt.close(fig)
     return video_html
 
-
-
 def plot_trajectory_matches(
     trajs_gt_list: list[np.ndarray],
     trajs_pred_list: list[np.ndarray],
@@ -601,13 +600,13 @@ def plot_trajectory_matches(
     Parameters
     ----------
     trajs_gt_list : list of np.ndarray
-        List of ground truth trajectories, each with shape (T, 3) [frame, y, x].
+        List of ground truth trajectories, each with shape (T, 3)[frame, y, x].
 
     trajs_pred_list : list of np.ndarray
         List of predicted trajectories, same format.
 
     matched_pairs : tuple of (np.ndarray, np.ndarray)
-        Indices of matched trajectories (as returned by `linear_sum_assignment`).
+        Indices of matched trajectories (returned by `linear_sum_assignment`).
 
     figsize : tuple
         Size of the matplotlib figure.
@@ -616,27 +615,31 @@ def plot_trajectory_matches(
 
     fig = plt.figure(figsize=figsize)
     ax = plt.gca()
-    
+
     # Plot matched trajectories.
     colors = np.random.rand(len(matched_pairs[0]), 3)
     for (gt_idx, pred_idx), color in zip(zip(*matched_pairs), colors):
         gt_traj = trajs_gt_list[gt_idx]
         pred_traj = trajs_pred_list[pred_idx]
 
-        ax.plot(pred_traj[:, 2], pred_traj[:, 1], color=color, linewidth=3, label="_predicted")
-        ax.plot(gt_traj[:, 2], gt_traj[:, 1], color="k", linewidth=1, label="_groundtruth")
+        ax.plot(pred_traj[:, 2], pred_traj[:, 1], color=color, linewidth=3,
+                label="_predicted")
+        ax.plot(gt_traj[:, 2], gt_traj[:, 1], color="k", linewidth=1,
+                label="_groundtruth")
 
     # Identify and plot unmatched ground truth (false negatives).
     unmatched_gt = set(range(len(trajs_gt_list))) - set(matched_pairs[0])
     for idx in unmatched_gt:
         traj = trajs_gt_list[idx]
-        ax.plot(traj[:, 2], traj[:, 1], color="gray", linewidth=1, label="_false_negative")
+        ax.plot(traj[:, 2], traj[:, 1], color="gray", linewidth=1,
+                label="_false_negative")
 
     # Identify and plot unmatched predictions (false positives).
     unmatched_pred = set(range(len(trajs_pred_list))) - set(matched_pairs[1])
     for idx in unmatched_pred:
         traj = trajs_pred_list[idx]
-        ax.plot(traj[:, 2], traj[:, 1], color="r", linewidth=1, label="_false_positive")
+        ax.plot(traj[:, 2], traj[:, 1], color="r", linewidth=1,
+                label="_false_positive")
 
     # Set up legend with unique labels only once.
     legend_handles = [
@@ -671,15 +674,14 @@ def plot_TAMSDs(
     ----------
     trajs_pred : list of np.ndarray
         Predicted trajectories.
-
     trajs_gt : list of np.ndarray, optional
         Ground truth trajectories.
-
     matched_pairs : tuple of arrays, optional
         tuple (gt_indices, pred_indices) for matched trajectories.
-
     max_lag : int, optional
-        Maximum time lag to compute TAMSD. If None, it's estimated from trajectory length.
+        Maximum time lag to compute TAMSD. If None, it's estimated from
+        trajectory length.
+
     """
     fig, axes = plt.subplots(
         1, 
@@ -721,4 +723,3 @@ def plot_TAMSDs(
 
     plt.tight_layout()
     plt.show()
-

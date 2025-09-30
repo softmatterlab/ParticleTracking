@@ -24,14 +24,12 @@ Functions:
 
 - `format_image`: Reformat image into (N, C, X, Y) format for neural networks.
 
-
 """
 
 from __future__ import annotations
 
 import numpy as np
 import torch
-# from skimage.measure import label, regionprops
 
 def normalize_min_max(
     image_array: np.ndarray, 
@@ -49,15 +47,12 @@ def normalize_min_max(
     ----------
     image_array : np.ndarray
         Array representing an image to be normalized.
-
     squeeze_in_2D : bool
         If True, reduces the image array to 2D by removing 
         single-dimensional entries.
-
     minimum_value : float, optional
         Custom minimum value to use for normalization. If None, the
         minimum is computed from the array.
-
     maximum_value : float, optional
         Custom maximum value to use for normalization. If None, the
         maximum is computed from the array.
@@ -96,9 +91,8 @@ def normalize_min_max(
         (maximum_value - minimum_value) * normalized_image_array 
         + minimum_value
     )
-    
-    return normalized_image_array
 
+    return normalized_image_array
 
 def pad_to_square(image: np.ndarray) -> np.ndarray:
     """Image padding to an LxL square.
@@ -117,28 +111,27 @@ def pad_to_square(image: np.ndarray) -> np.ndarray:
         Padded image.
 
     """
-    
+
     # Extract the dimensions.
     x_dimension = image.shape[0]
     y_dimension = image.shape[1]
-    
+
     # Extract the largest dimension.
     largest_dimension = np.maximum(x_dimension, y_dimension)
-    
+
     # Calculate the closest power of 2 equal or larger than the largest 
     # dimension. For padding up to a power of 2.
-    
+
     # Determine the diference to up-pad to the closest power of 2.
     x_distance_to_pad = int(np.abs(x_dimension - largest_dimension))
     y_distance_to_pad = int(np.abs(y_dimension - largest_dimension))
-    
+
     # Ensure the distances are integers.
     padded_image = np.pad(image, (
         (0, x_distance_to_pad),(0, y_distance_to_pad)
         ))
 
     return padded_image
-
 
 def mask_to_positions(
     mask: np.ndarray, 
@@ -179,11 +172,10 @@ def mask_to_positions(
     # Determines the connectivity of pixels having the same value. 
     # 1-connectivity refers to direct connections in x and y directions. 
     # 2-connectivity refers also includes diagonal connections.
-    
+
     # All the connected regions are associated to the same property (position). 
     labels = label(mask)
- 
-    
+
     if intensity_image is not None:
         # Instance to measure properties of previously labelled regions.
         props = regionprops(labels, intensity_image=intensity_image)
@@ -194,9 +186,8 @@ def mask_to_positions(
         props = regionprops(labels)
         # Extract the centroids of each labelled region.
         mask_centroids = np.array([prop.centroid for prop in props])
-    
-    return mask_centroids
 
+    return mask_centroids
 
 def format_image(img: np.ndarray) -> np.ndarray:
     """Expands and formats image to (N, C, X, Y), needed for LodeSTAR.
@@ -208,7 +199,6 @@ def format_image(img: np.ndarray) -> np.ndarray:
         
     Returns
     -------
-
     np.ndarray
         image in (N, C, X, Y) format.
 
