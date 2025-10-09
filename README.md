@@ -1,6 +1,6 @@
 # Particle Tracking for Soft Matter
 
-**Tracking Tracking for Soft Matter** offers a modular set of Jupyter notebooks to help experimentalists and researchers analyze microscopy data with minimal coding effort. The tutorials are designed to be accessible, with well-structured utility modules and clear workflows.
+**Particle Tracking for Soft Matter** offers a modular set of Jupyter notebooks to help experimentalists and researchers analyze microscopy data with minimal coding effort. The tutorials are designed to be accessible, with well-structured utility modules and clear workflows.
 
 ---
 
