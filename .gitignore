@@ -17,15 +17,3 @@ Thumbs.db
 # Logs
 *.log
 lightning_logs/
-
-# Models / Checkpoints
-*.pth
-*.pt
-*.ckpt
-
-# Data files
-*.npz
-*.npy
-*.csv
-*.h5
-*.hdf5
