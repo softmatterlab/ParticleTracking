@@ -51,6 +51,7 @@ import math
 import numpy as np
 
 from .utils_evaluation import compute_TAMSD
+from .utils_imageproc import normalize_min_max
 
 def play_video(
     video: np.ndarray,
@@ -522,8 +523,13 @@ def make_video_with_trajs(
     if figure_title is not None:
         ax.set_title(figure_title)
 
+    vmin, vmax = np.percentile(video, [1, 99])
+    # Normalize video intensities for better plotting.
+    # for frame_idx in range(len(video)):
+    #     video[frame_idx] = normalize_min_max(video[frame_idx], minimum_value=vmin, maximum_value=vmax)
+
     # Image artist (static background per frame).
-    im = ax.imshow(video[0], cmap="gray", animated=True)
+    im = ax.imshow(video[0], cmap="gray", animated=True, vmin=vmin, vmax=vmax)
 
     # Predicted trajectories: one line + one scatter (last point) per traj.
     pred_lines, pred_scatters = [], []
