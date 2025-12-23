@@ -43,7 +43,10 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
+from torch import nn
 from torch_geometric.data import Data
+from deeplay import DeeplayModule
+
 
 class GraphFromTrajectories:
     """Graph representation of the motion of particles.
@@ -126,7 +129,7 @@ class GraphFromTrajectories:
         """
 
         edges = []          
-        edge_distances = [] 
+        edge_features = [] 
         num_nodes = len(positions)
 
         for node_idx in range(num_nodes):
@@ -140,48 +143,81 @@ class GraphFromTrajectories:
                     continue
                 if frame_gap > self.max_frame_distance:
                     break
-                distances = np.linalg.norm(
+                distance = np.linalg.norm(
                     positions[node_idx] - positions[neighbor_idx]
                 )
 
-                if distances < self.connectivity_radius:
+                if distance < self.connectivity_radius:
                     edges.append([node_idx, neighbor_idx])
-                    edge_distances.append(distances)
+                    edge_features.append([
+                        distance,
+                        frame_gap / self.max_frame_distance,
+                        (distance**2)/(frame_gap / self.max_frame_distance)
+                    ])
 
         edges = np.array(edges, dtype=np.int64)
-        edge_distances = np.array(edge_distances, dtype=np.float32)
+        edge_features = np.array(edge_features, dtype=np.float32)
             
-        return edges, edge_distances
+        return edges, edge_features
 
     def get_gt_connectivity(
-        self: GraphFromTrajectories,
+        self: "GraphFromTrajectories",
         labels: np.ndarray,
-        edge_index: np.ndarray
+        edge_index: np.ndarray,
+        times: np.ndarray,
     ) -> np.ndarray:
-        """Compute ground truth connectivity.
+        """Compute ground-truth connectivity allowing only the shortest
+        valid temporal connection between consecutive localizations
+        of the same particle.
 
         Parameters
         ----------
         labels : np.ndarray
-            The labels of the particles in the graph, used to determine
-            the ground truth connectivity.
+            Array of particle identifiers for each node.
         edge_index : np.ndarray
-            The indices of the edges in the graph, representing the
-            connectivity between nodes.
+            Array of shape (N_edges, 2) containing source and target node indices.
+        times : np.ndarray
+            Array of timestamps (or frame indices) for each node.
 
         Returns
         -------
         np.ndarray
-            A boolean array indicating the ground truth connectivity
-            between nodes. True indicates a valid connection, while
-            False indicates an invalid connection.
-
+            Boolean array of shape (N_edges,) indicating ground-truth
+            connectivity. True for valid connections (same particle, minimal Δt),
+            False otherwise.
         """
 
-        source_particle = labels[edge_index[:, 0]] 
-        target_cell = labels[edge_index[:, 1]]
-        self_connections_mask = source_particle == target_cell #source target
-        gt_connectivity = self_connections_mask
+        # Extract source/target info
+        src, tgt = edge_index[:, 0], edge_index[:, 1]
+        src_label, tgt_label = labels[src], labels[tgt]
+        src_time, tgt_time = times[src], times[tgt]
+
+        # Candidate same-particle links
+        same_particle_mask = src_label == tgt_label
+        gt_connectivity = np.zeros_like(same_particle_mask, dtype=bool)
+
+        # For each particle, find its consecutive detections
+        unique_particles = np.unique(labels)
+        for pid in unique_particles:
+            # indices of detections for this particle, sorted by time
+            particle_nodes = np.where(labels == pid)[0]
+            particle_times = times[particle_nodes]
+            sorted_idx = np.argsort(particle_times)
+            sorted_nodes = particle_nodes[sorted_idx]
+            sorted_times = particle_times[sorted_idx]
+
+            # Compute minimal valid links (successive detections)
+            if len(sorted_nodes) < 2:
+                continue  # no link possible
+
+            # Build all consecutive node pairs (i, i+1)
+            consecutive_pairs = set(zip(sorted_nodes[:-1], sorted_nodes[1:]))
+
+            # Mark as True only those edges that match one of these pairs
+            for i, (s, t) in enumerate(zip(src, tgt)):
+                if (s, t) in consecutive_pairs:
+                    gt_connectivity[i] = True
+
         return gt_connectivity
 
     def __call__(
@@ -216,6 +252,7 @@ class GraphFromTrajectories:
         """
 
         graph_dataset = []
+
         videos = df["set"].unique()
 
         # Each set is a video, compute graphs from one video at a time.
@@ -223,28 +260,30 @@ class GraphFromTrajectories:
 
             # Get a video from the dataset.
             df_video = df[df["set"] == current_video]
+            df_video = df_video.sort_values(by=["frame"]).reset_index(drop=True)
 
             # Convert to numpy arrays.
-            node_attr = df_video[["centroid-0","centroid-1"]].to_numpy()
+            positions = df_video[["centroid-0","centroid-1"]].to_numpy()
             node_labels = df_video["label"].to_numpy()
             frames = df_video["frame"].to_numpy()
 
             # Extract graph data.
-            edge_index, edge_attr = self.get_connectivity(node_attr, frames)
-            edge_gt = self.get_gt_connectivity(node_labels, edge_index)
+            edge_index, edge_attr = self.get_connectivity(positions, frames)
+            edge_gt = self.get_gt_connectivity(node_labels, edge_index, frames)
 
             # Encapsulate extracted data in dictionary.
             graph = Data(
-                x=torch.tensor(node_attr, dtype=torch.float),
+                x=torch.tensor(positions, dtype=torch.float),
                 edge_index=torch.tensor(edge_index.T, dtype=torch.long),
-                edge_attr=torch.tensor(edge_attr[:, None], dtype=torch.float),
-                distance=torch.tensor(edge_attr[:, None], dtype=torch.float),
+                edge_attr=torch.tensor(edge_attr, dtype=torch.float),
+                distance=torch.tensor(edge_attr[:, 0:1], dtype=torch.float),
                 frames=torch.tensor(frames, dtype=torch.float),
                 y=torch.tensor(edge_gt[:, None], dtype=torch.float),
             )
             graph_dataset.append(graph)
 
         return graph_dataset 
+
 
 class GraphDataset(torch.utils.data.Dataset):
     """GraphDataset class for training.
@@ -352,7 +391,7 @@ class GraphDataset(torch.utils.data.Dataset):
         
         """
 
-        graph = self.graph_dataset[np.random.randint(0, self.dataset_size - 1)]
+        graph = self.graph_dataset[np.random.randint(0, len(self.graph_dataset) - 1)]
         frames, edge_index = graph.frames, graph.edge_index
         select_frame = np.random.randint(self.Dt, frames.max() + 1)
 
@@ -376,7 +415,7 @@ class GraphDataset(torch.utils.data.Dataset):
             x = node_attr, 
             edge_index = edge_index, 
             edge_attr = graph.edge_attr[edge_mask],
-            distance = graph.edge_attr[edge_mask], 
+            distance = graph.edge_attr[edge_mask,0:1], 
             y = graph.y[edge_mask],  
         )
         if self.transform: return_graph = self.transform(return_graph)
@@ -552,81 +591,70 @@ class NodeDropout:
         graph.y = graph.y[~edges_connected_to_removed_node]
 
         return graph
-  
+
+
 class ComputeTrajectories:
-    """Compute trajectories from graph predictions.
+    """
+    Reconstruct trajectories from Sinkhorn-based edge predictions.
 
-    This class computes trajectories from graph predictions by pruning edges
-    based on the predicted labels. The pruning is done by removing edges that
-    do not connect to the source particle or exceed a specified frame
-    difference. The resulting trajectories are represented as connected
-    components in the pruned graph. The class uses NetworkX to compute the
-    connected components and returns a list of trajectories represented as sets
-    of node indices. The trajectories are computed from the graph predictions,
-    which are assumed to be binary labels indicating the presence of a
-    connection between particles. The trajectories are represented as a list of
-    sets, where each set contains the indices of the nodes in the trajectory.
-    The class can be used to analyze the motion of particles in a video or a
-    sequence of frames.
-
-    Parameters
-    ----------
-    graph : torch_geometric.data.Data
-        The input graph object containing node features and other attributes.
-    predictions : np.ndarray
-        The predicted labels for the edges in the graph, used to determine the
-        connectivity between nodes. The predictions are assumed to be binary
-        labels indicating the presence of a connection between particles.
-
-    Methods
-    -------
-    `__call__(graph, predictions)`
-        Computes trajectories from the graph and predictions. The trajectories
-        are represented as connected components in the pruned graph.
-    `prune_edges(graph, predictions)`
-        Prunes the edges of the graph based on the predicted labels. The
-        pruning is done by removing edges that do not connect to the source
-        particle or exceed a specified frame difference. The resulting pruned
-        edges are used to compute the trajectories from the graph predictions.
-
+    The Sinkhorn head already enforces near one-to-one assignments
+    between sources and targets. This class thresholds low-probability
+    links and builds connected components as trajectories.
     """
 
+    def __init__(self, p_min: float = 0.5):
+        self.p_min = p_min
+
     def __call__(self, graph, predictions):
-        """Compute trajectories."""
-        pruned_edges = self.prune_edges(graph, predictions)
+        """
+        Parameters
+        ----------
+        graph : object
+            Graph-like structure with attributes such as 'frames'.
+        predictions : tuple
+            Output of the Sinkhorn head:
+              (probs_real, edge_index, probs_all, all_src, dummy_mask)
+
+        Returns
+        -------
+        list[set[int]]
+            List of trajectories, each as a set of node indices.
+        """
+        (
+            probs_real,
+            edge_index,
+            probs_all,
+            all_src,
+            dummy_mask,
+        ) = predictions
+
+        # Move to CPU numpy
+        edge_index = edge_index.detach().cpu().numpy()
+        probs_real = probs_real.detach().cpu().numpy().squeeze()
+
+        # Select edges above probability threshold
+        valid = probs_real >= self.p_min
+        edges = edge_index[:, valid].T
+        scores = probs_real[valid]
+
+        # Optional: enforce at most one incoming edge per target
+        order = np.argsort(-scores)
+        used_targets = set()
+        pruned_edges = []
+        for i in order:
+            s, t = edges[i]
+            if t not in used_targets:
+                pruned_edges.append((int(s), int(t)))
+                used_targets.add(t)
+
+        # Build graph from pruned edges
         pruned_graph = nx.Graph()
         pruned_graph.add_edges_from(pruned_edges)
+
+        # Extract connected components as trajectories
         trajectories = list(nx.connected_components(pruned_graph))
         return trajectories
 
-    def prune_edges(self, graph, predictions):
-        """Prune edges."""
-        pruned_edges = []
-        frame_pairs  = np.stack(
-            [graph.frames[graph.edge_index[0]], 
-             graph.frames[graph.edge_index[1]]],
-             axis=1
-        )
-        
-        # Find edges connected to the source particle and prune
-        # if they exceed the frame difference.
-        for source_particle in np.unique(graph.edge_index[0]): 
-            source_particle_mask = graph.edge_index[0] == source_particle
-            target_cell_candidates = predictions[source_particle_mask] == True
-            if np.any(target_cell_candidates):
-                frame_diff = (frame_pairs[source_particle_mask, 1] -
-                              frame_pairs[source_particle_mask, 0])
-                
-                min_frame_diff = frame_diff[target_cell_candidates].min()
-                target_cell_mask = (target_cell_candidates 
-                                 & (frame_diff == min_frame_diff))
-                
-                edge = graph.edge_index[:,
-                source_particle_mask][:, target_cell_mask]
-                edge = edge.reshape(-1, 2)
-                if len(edge) == 1:
-                    pruned_edges.append(tuple(*edge.numpy()))
-        return pruned_edges
 
 def make_list(
     trajs_from_graph: list[int],
@@ -675,3 +703,162 @@ def make_list(
         traj = traj[np.argsort(traj[:, 0])]
         trajs_list.append(traj)
     return trajs_list
+
+
+class SoftmaxHead(DeeplayModule):
+    """
+    Deterministic per-source softmax head with learnable per-node dummy logits.
+
+    Output:
+      probs_real : [N_edges, 1]
+      edge_index : [2, N_edges]
+      probs_all  : [N_edges + N_nodes]
+      all_src    : [N_edges + N_nodes]
+      dummy_mask : [N_edges + N_nodes]
+      node_attr  : passed-through node attributes (for losses using coordinates)
+    """
+
+    def __init__(self, base_head, eps=1e-8):
+        super().__init__()
+        self.base_head = base_head
+        self.eps = eps
+
+        # will be lazy-initialized based on node_attr dimension
+        self.dummy_mlp = None
+
+        # optional: bias for real edges initialized negative
+        self.init_real_bias = -2.0
+        self.init_dummy_bias = 2.0
+
+    def _lazy_init_dummy(self, node_attr):
+        """Create dummy_mlp once we know the dimensionality of node attributes."""
+        if self.dummy_mlp is not None:
+            return
+
+        dim = node_attr.shape[1]
+        device = node_attr.device
+
+        self.dummy_mlp = nn.Linear(dim, 1, bias=True).to(device)
+
+        # Initialize: dummy should win early in training
+        nn.init.constant_(self.dummy_mlp.weight, 0.0)
+        nn.init.constant_(self.dummy_mlp.bias, self.init_dummy_bias)
+
+        # Also bias the last layer of the base head (if accessible)
+        if hasattr(self.base_head, "weight"):
+            # it's a Linear layer
+            nn.init.constant_(self.base_head.bias, self.init_real_bias)
+
+    def forward(self, inputs):
+        edge_attr, edge_index, node_attr = inputs
+        src = edge_index[0]
+        num_nodes = node_attr.shape[0]
+        device = src.device
+
+        # lazy create dummy MLP after dimension known
+        self._lazy_init_dummy(node_attr)
+
+        # ---- Real-edge logits ----
+        logits = self.base_head(edge_attr).view(-1)  # [N_edges]
+        logits = logits.clamp(-10, 10)
+
+        # ---- Dummy logits ----
+        dummy_logits = self.dummy_mlp(node_attr).view(-1)  # [N_nodes]
+
+        # ---- Combine all ----
+        all_logits = torch.cat([logits, dummy_logits], dim=0)  # [E + N]
+        all_src = torch.cat([src, torch.arange(num_nodes, device=device)], dim=0)
+        dummy_mask = torch.arange(all_logits.numel(), device=device) >= logits.numel()
+
+        # ---- Per-source softmax ----
+
+        # Scatter-reduce "amax" is not supported on MPS → manual segment max
+        max_per_src = torch.full((num_nodes,), float("-inf"), device=src.device)
+
+        # Compute maximum logit per source
+        # For each entry i: max_per_src[all_src[i]] = max(old, all_logits[i])
+        max_per_src = max_per_src.index_put_(
+            (all_src,),
+            torch.maximum(max_per_src[all_src], all_logits),
+            accumulate=False
+        )
+
+        # Exponentiate shifted logits (numerically stable)
+        exp_logits = torch.exp(all_logits - max_per_src[all_src])
+
+        # Per-source sum
+        sum_per_src = torch.zeros(num_nodes, device=src.device)
+        sum_per_src.index_add_(0, all_src, exp_logits)
+
+        # Softmax
+        probs_all = exp_logits / (sum_per_src[all_src] + self.eps)
+        probs_all = probs_all.clamp(min=self.eps, max=1.0)
+
+        # real-edge probabilities for training and metrics
+        probs_real = probs_all[~dummy_mask].unsqueeze(-1)   # [N_edges, 1]
+
+
+        # ---- Extract real-edge probs ----
+        probs_real = probs_all[~dummy_mask].unsqueeze(-1)  # [N_edges, 1]
+
+        return (probs_real, edge_index, probs_all, all_src, dummy_mask)
+
+
+class NodewiseNLLLoss(nn.Module):
+    """
+    Proper categorical cross-entropy for the SoftmaxHead.
+
+    Input:
+      y_hat = (probs_real, edge_index, probs_all, all_src, dummy_mask)
+      y     = [N_edges] binary vector for *real* edges only
+
+    Builds correct per-source targets including dummy, and computes:
+
+        L = - Σ_i log p(correct_edge_i)
+
+    """
+    def __init__(self, eps=1e-12):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, y_hat, y):
+        probs_real, edge_index, probs_all, all_src, dummy_mask = y_hat
+        src = edge_index[0]
+        device = probs_all.device
+
+        # Prepare counts
+        num_nodes = int(all_src.max().item()) + 1
+
+        # Ground truth for real edges only: [N_edges]
+        y = y.view(-1).float()
+
+        # Build full y_all including dummy labels
+        y_all = torch.zeros_like(probs_all)
+
+        # Real edges: copy ground truth
+        y_all[~dummy_mask] = y
+
+        # Identify which source nodes have a real target (positive)
+        has_real = torch.zeros(num_nodes, device=device)
+        has_real.index_add_(0, src, y)
+        has_real = has_real > 0
+
+        # Dummy edges are positive only when the node has *no* real outgoing edges
+        dummy_src = all_src[dummy_mask]
+        y_all[dummy_mask] = (~has_real[dummy_src]).float()
+
+        # This ensures exactly one positive per source
+        # Now compute categorical cross-entropy over each source group.
+        logp = torch.log(probs_all.clamp(self.eps, 1.0))
+
+        # Reduce -log p(correct) grouped by sources
+        loss_per_src = torch.zeros(num_nodes, device=device)
+
+        pos_src = all_src[y_all > 0.5]
+        pos_logp = logp[y_all > 0.5]
+
+        loss_per_src.index_add_(0, pos_src, -pos_logp)
+
+        # Normalize over sources that actually have predictions
+        unique_sources = torch.unique(all_src)
+        return loss_per_src[unique_sources].mean()

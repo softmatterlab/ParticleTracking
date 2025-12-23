@@ -723,3 +723,175 @@ def plot_TAMSDs(
 
     plt.tight_layout()
     plt.show()
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def plot_trajectory_timeline(
+    gt_trajs,
+    pred_trajs,
+    matched_pairs,
+    eps=5,
+    max_pairs=None,
+    grid_alpha=0.15,
+):
+    """
+    Timeline plot based on dense frame filling (trajectory_sqdistance logic).
+
+    Parameters
+    ----------
+    gt_trajs : list[np.ndarray]
+        Ground-truth trajectories [frame, x, y].
+    pred_trajs : list[np.ndarray]
+        Predicted trajectories [frame, x, y].
+    matched_pairs : tuple[np.ndarray, np.ndarray]
+        Output of trajectory_assignment: (gt_indices, pred_indices).
+    eps : float
+        Spatial threshold in pixels (frame-level).
+    max_pairs : int or None
+        Limit number of paired trajectories shown.
+    grid_alpha : float
+        Alpha for vertical frame grid.
+    """
+
+    COLORS = {
+        "gt": "#000000",      # black
+        "ok": "#1f77b4",      # blue
+        "error": "#d62728",   # red (localisation error)
+        "extra": "#ff7f0e",   # orange (extra detection during blink)
+        "fn": "#9467bd",      # purple
+        "fp": "#bdbdbd",      # light gray
+        "grid": "#cccccc",
+    }
+
+    gt_idx, pred_idx = matched_pairs
+    paired = list(zip(gt_idx, pred_idx))
+
+    if max_pairs is not None:
+        paired = paired[:max_pairs]
+
+    gt_matched = set(gt_idx)
+    pred_matched = set(pred_idx)
+
+    fig, ax = plt.subplots(figsize=(13, 6))
+    y = 0
+    all_frames = []
+
+    # Paired trajectories
+    for g, p in paired:
+        gt = gt_trajs[g]
+        pred = pred_trajs[p]
+
+        # Dense frame axis (same spirit as trajectory_sqdistance)
+        union = np.union1d(gt[:, 0], pred[:, 0]).astype(int)
+        frames = np.arange(union.min(), union.max() + 1, dtype=int)
+        all_frames.extend(frames)
+
+        gt_f = np.full((len(frames), 2), np.nan)
+        pred_f = np.full((len(frames), 2), np.nan)
+
+        gt_i = (gt[:, 0].astype(int) - frames[0])
+        pred_i = (pred[:, 0].astype(int) - frames[0])
+
+        gt_f[gt_i] = gt[:, 1:3]
+        pred_f[pred_i] = pred[:, 1:3]
+
+        y_pred = y - 0.6
+
+        for k, f in enumerate(frames):
+            gt_ok = np.isfinite(gt_f[k, 0])
+            pr_ok = np.isfinite(pred_f[k, 0])
+
+            # GT reference (frame-level, no interpolation artefacts)
+            if gt_ok:
+                ax.plot(
+                    [f + 0.05, f + 0.95],
+                    [y, y],
+                    color=COLORS["gt"],
+                    lw=2,
+                )
+
+            # Real blinking
+            if not gt_ok and not pr_ok:
+                continue
+
+            # Extra detection during GT blink
+            if not gt_ok and pr_ok:
+                ax.plot(
+                    [f + 0.05, f + 0.95],
+                    [y_pred, y_pred],
+                    color=COLORS["extra"],
+                    lw=3,
+                )
+                continue
+
+            # Missed detection → gap
+            if gt_ok and not pr_ok:
+                continue
+
+            # Both present → distance check
+            d2 = np.sum((gt_f[k] - pred_f[k]) ** 2)
+            color = COLORS["ok"] if d2 < eps**2 else COLORS["error"]
+
+            ax.plot(
+                [f + 0.05, f + 0.95],
+                [y_pred, y_pred],
+                color=color,
+                lw=3,
+            )
+
+        y += 1.5
+
+    # Missed GT (FN)
+    for i, gt in enumerate(gt_trajs):
+        if i in gt_matched:
+            continue
+        frames = gt[:, 0].astype(int)
+        all_frames.extend(frames)
+
+        for f in frames:
+            ax.plot(
+                [f + 0.05, f + 0.95],
+                [y, y],
+                color=COLORS["fn"],
+                lw=2,
+            )
+        y += 1.5
+
+    # Spurious predictions (FP)
+    for j, pred in enumerate(pred_trajs):
+        if j in pred_matched:
+            continue
+        frames = pred[:, 0].astype(int)
+        all_frames.extend(frames)
+
+        for f in frames:
+            ax.plot(
+                [f + 0.05, f + 0.95],
+                [y-0.6, y-0.6],
+                color=COLORS["fp"],
+                lw=2,
+            )
+        y += 1.5
+
+    # Vertical frame grid
+    if all_frames:
+        fmin, fmax = min(all_frames), max(all_frames)
+        for f in range(fmin, fmax + 1):
+            ax.axvline(f, color=COLORS["grid"], alpha=grid_alpha, lw=0.5)
+
+    # Formatting
+    ax.set_xlabel("Frame")
+    ax.set_ylabel("Trajectory pair")
+    ax.set_yticks([])
+    ax.set_title(
+        "Tracking timeline\n"
+        "GT: black | "
+        "Pred: blue (correct), red (localization error), orange (extra detection) | "
+        "FN: purple | FP: gray"
+    )
+
+    plt.tight_layout()
+    plt.show()

@@ -69,7 +69,8 @@ def evaluate_locs(
         Ground truth positions.
 
     distance_th: float
-        Distance threshold (in pixels) for considering a match.
+        Distance threshold for considering a match. In nanometers, unless 
+        pixel_size_nm is None.
 
     pixel_size_nm: float, optional
         The size of each pixel in nanometers. Default is 100 nm. Set it to None
@@ -94,6 +95,28 @@ def evaluate_locs(
     if gt_positions.shape[1] == 3:
         gt_positions = gt_positions[:, :2]    
 
+    # -----------------------------------
+    # Remove NaN positions (blinking)
+    # -----------------------------------
+    pred_positions = np.asarray(pred_positions)
+    gt_positions = np.asarray(gt_positions)
+
+    pred_valid = ~np.isnan(pred_positions).any(axis=1)
+    gt_valid = ~np.isnan(gt_positions).any(axis=1)
+
+    pred_positions = pred_positions[pred_valid]
+    gt_positions = gt_positions[gt_valid]
+
+    # Handle empty cases safely
+    if len(pred_positions) == 0 and len(gt_positions) == 0:
+        return 0, 0, 0, 0.0, 0.0
+
+    if len(pred_positions) == 0:
+        return 0, 0, len(gt_positions), 0.0, float("inf")
+
+    if len(gt_positions) == 0:
+        return 0, len(pred_positions), 0, 0.0, float("inf")
+
     # Compute the pairwise distance matrix.
     distance_matrix = scipy.spatial.distance_matrix(
         pred_positions, 
@@ -116,7 +139,7 @@ def evaluate_locs(
     FN = len(gt_positions) - TP
     RMSE = (
         np.sqrt(
-            np.mean(distance_matrix[row_index, column_index][valid_matches])
+            np.mean(distance_matrix[row_index, column_index][valid_matches] ** 2)
         )
         if TP > 0
         else float("inf")
@@ -172,8 +195,8 @@ def trajectory_sqdistance(
     gt_f = np.full((*ind.shape, 2), np.Inf)
     pred_f = np.full((*ind.shape, 2), np.Inf)
 
-    gt_f[gt_i, :] = gt[:, 1:]
-    pred_f[pred_i, :] = pred[:, 1:]
+    gt_f[gt_i, :] = gt[:, 1:3]
+    pred_f[pred_i, :] = pred[:, 1:3]
 
     mask = np.isfinite(gt_f[:, 0]) & np.isfinite(pred_f[:, 0])
     d2 = np.full(len(ind), eps**2)
@@ -246,7 +269,7 @@ def trajectory_metrics(
 
     This function computes tracking performance metrics between ground truth 
     and predicted trajectories based on Chenouard et al. (Nat. Methods 2014, 
-    doi.org/10.1038/nmeth.2808): TP, FP, FN, alpha, and beta.
+    doi.org/10.1038/nmeth.2808): F1, TP, FP, FN, alpha, and beta.
     
     Parameters
     ----------
@@ -280,16 +303,18 @@ def trajectory_metrics(
             dFP += len(c) * eps**2
     alpha = 1.0 - d / dmax
     beta = (dmax - d) / (dmax + dFP)
+    F1 = 2 * TP / (2 * TP + FP + FN) if TP > 0 else 0.0
 
     print(
         f""" 
+        F1: {F1:.3f}
         TP: {TP}
         FP: {FP}
         FN: {FN} 
         alpha: {alpha:.3f}
         beta: {beta:.3f}"""
     )
-    return TP, FP, FN, alpha, beta
+    return F1, TP, FP, FN, alpha, beta
 
 def compute_TAMSD(
     traj: np.ndarray, 

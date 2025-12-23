@@ -27,7 +27,9 @@ Module Structure
 - `generate_particle_dataset` : Combine centroids and DeepTrack rendering to 
     create datasets.
 
-- `traj_break` : Split trajectories based on discontinuities or FOV exits.
+- `apply_blinking` : Introduce blinking events into trajectories.
+
+- `trajs_array_to_list` : Split trajectories based on FOV exits.
 
 
 NOTE: Spatial Quantities and Units
@@ -85,6 +87,11 @@ def generate_centroids(
     # Margin ensures particles stay fully inside image.
     margin = float(particle_radius) if particle_radius is not None else 0.0
     min_distance = 2 * margin if particle_radius is not None else 0.0
+
+    # Diffraction-limited particles cannot be placed too close to edges and each other
+    if particle_radius is not None and particle_radius < 1.0:
+        margin = max(5.0, margin)
+        min_distance = max(5.0, min_distance)
 
     # Sample positions.
     if particle_radius is None:
@@ -211,26 +218,121 @@ def transform_to_video(
     # The desired format is (N, frames, dim), with dim the spatial dimensions.
     trajs = np.moveaxis(trajs, 0, 1)  # Swap axis
 
-    # Generate inner particle (core).
+    # -------------------------------------------------
+    # Handle blinking (NaNs) — default: no blinking
+    # -------------------------------------------------
+
+    if np.isnan(trajs).any():
+        blink_mask = np.any(np.isnan(trajs), axis=-1)  # (N, T)
+    else:
+        blink_mask = np.zeros(trajs.shape[:2], dtype=bool)
+
+    
+    # =================================================
+    # DeepTrack cannot receive NaNs → fill positions
+    # =================================================
+    trajs_filled = trajs.copy()
+
+    for i in range(trajs.shape[0]):
+        valid = np.where(~blink_mask[i])[0]
+        if valid.size == 0:
+            trajs_filled[i, :, :2] = 0.0
+            continue
+
+        first, last = valid[0], valid[-1]
+
+        # Back-fill before first valid frame
+        trajs_filled[i, :first, :2] = trajs_filled[i, first, :2]
+
+        # Forward-fill after last valid frame
+        trajs_filled[i, last + 1 :, :2] = trajs_filled[i, last, :2]
+
+        # Forward-fill internal NaNs
+        for t in range(first + 1, last + 1):
+            if blink_mask[i, t]:
+                trajs_filled[i, t, :2] = trajs_filled[i, t - 1, :2]
+
+
+    trajs = trajs_filled
+
+    # -----------------------------
+    # Inner particle (core) with blink-aware intensity
+    # -----------------------------
+    
+    _base_intensity = _core_particle_dict.get("intensity", 1.0)
+
     inner_particle = dt.Ellipsoid(
-        trajectories=trajs,
+        trajectories=trajs,  # keep as ndarray (N, T, 2) for dt.Sequence compatibility
         replicate_index=lambda _ID: _ID,
-        trajectory=lambda replicate_index, trajectories: dt.units.pixel
-        * trajectories[replicate_index],
+        trajectory=lambda replicate_index, trajectories: np.concatenate(
+            [
+                trajectories[replicate_index],  # (T, 2) in pixel units
+                blink_mask[replicate_index][:, None].astype(float),  # (T, 1) blink flag
+            ],
+            axis=1,
+        ),  # returns (T, 3): [x, y, blink_flag]
         number_of_particles=trajs.shape[0],
         traj_length=trajs.shape[1],
-        position=lambda trajectory: trajectory[0],
+        # initial position (x,y) only, with pixel units
+        # position=lambda trajectory: dt.units.pixel * trajectory[0, :2],
+        position=lambda trajectory: (
+            dt.units.pixel * np.array([-10, -10])
+            if trajectory[0, 2] > 0.5
+            else dt.units.pixel * trajectory[0, :2]
+        ),
         angles_list=angles,
-        rotation=\
-            lambda replicate_index, angles_list: angles_list[replicate_index],
+        rotation=lambda replicate_index, angles_list: angles_list[replicate_index],
         **_core_particle_dict,
     )
 
-    # Sequential definition of particles with changing positions per frame.
+    # def _seq_position(trajectory, sequence_step):
+    #     # trajectory is (T, 3) = [x, y, blink_flag]
+    #     return dt.units.pixel * trajectory[sequence_step, :2]
+
+    def _seq_position(trajectory, sequence_step):
+        # trajectory = [x, y, invisible_flag]
+        if trajectory[sequence_step, 2] > 0.5:
+            # Move particle far outside the image
+            return dt.units.pixel * np.array([-10, -10])
+        return dt.units.pixel * trajectory[sequence_step, :2]
+
+    def _seq_intensity(trajectory, sequence_step):
+        # blink_flag == 1.0 => blinking => intensity 0
+        if trajectory[sequence_step, 2] > 0.5:
+            return 0.0
+        if callable(_base_intensity):
+            return float(_base_intensity())
+        return float(_base_intensity)
+
     sequential_inner_particle = dt.Sequential(
         inner_particle,
-        position=lambda trajectory, sequence_step: trajectory[sequence_step],
+        position=_seq_position,
+        intensity=_seq_intensity,
     )
+
+
+    # # Generate inner particle (core).
+    # inner_particle = dt.Ellipsoid(
+    #     trajectories=trajs,
+    #     replicate_index=lambda _ID: _ID,
+    #     trajectory=lambda replicate_index, trajectories: dt.units.pixel
+    #     * trajectories[replicate_index],
+    #     number_of_particles=trajs.shape[0],
+    #     traj_length=trajs.shape[1],
+    #     position=lambda trajectory: trajectory[0],
+    #     angles_list=angles,
+    #     rotation=\
+    #         lambda replicate_index, angles_list: angles_list[replicate_index],
+    #     **_core_particle_dict,
+    # )
+
+
+
+    # # Sequential definition of particles with changing positions per frame.
+    # sequential_inner_particle = dt.Sequential(
+    #     inner_particle,
+    #     position=lambda trajectory, sequence_step: trajectory[sequence_step],
+    # )
 
     # Check if shell particle properties are provided.
     if shell_particle_props:
@@ -314,7 +416,6 @@ def transform_to_video(
         >> dt.Background(_background_dict["background_mean"])
         >> dt.Poisson(snr=_background_dict["poisson_snr"])
         >> sequential_background
-        # >> dt.NormalizeMinMax()
     )
 
     if trajs.shape[1] > 1:
@@ -330,7 +431,12 @@ def transform_to_video(
     else:
         _video = sample.update().resolve()
     
-    return _video#.__abs__() # Ensure real-valued field.
+    if save_video:
+        if not path:
+            raise ValueError("Path must be provided to save the video.")
+        np.save(path, _video)
+
+    return _video
 
 def create_ground_truth_map(
     ground_truth_positions: np.ndarray,
@@ -512,13 +618,13 @@ def generate_particle_dataset(
         max_axis_shell = np.max(shell_radius)
         max_axis_particle = np.max(particle_radius)
 
-        # Extract minimum radius in pixel units.
+        # Extract maximum radius in nanometers.
         total_particle_radius = np.maximum(
             max_axis_particle, 
             max_axis_shell
             )
 
-        # Size of probability cloud set as the biggest body (pixel units).
+        # Size of probability cloud set as the biggest body (nanometers).
         probability_cloud_size = (
             shell_radius if max_axis_shell
             > max_axis_particle else particle_radius
@@ -563,7 +669,8 @@ def simulate_Brownian_trajs(
     num_particles: int,
     num_timesteps: int,
     fov_size: float,
-    diffusion_std: float = 1.0,
+    diffusion_std: float | tuple[float, float] = 1.0,
+    min_length: int = 5,
 ) -> np.ndarray:
     """Simulate 2D Brownian motion trajectories in a periodic square fov.
 
@@ -576,9 +683,15 @@ def simulate_Brownian_trajs(
     fov_size : float
         Size of the square field of view, i.e., the image (in pixels). 
         Positions wrap modulo fov_size.
-    diffusion_std : float, default=1.0
-        Standard deviation of displacement per time step. It corresponds to 
-        sqrt(2 * D * dt).
+    diffusion_std : float or tuple(float, float), default=1.0
+        - If a single float, all trajectories share the same diffusion 
+        coefficient.
+        - If a tuple (low, high), a different diffusion standard deviation is 
+        drawn uniformly from [low, high) for each trajectory.
+        It corresponds to sqrt(2 * D * dt).
+    min_length : int, default=5
+        Minimum length of trajectory segments to keep after breaking at
+        periodic-boundary crossings.
      
     Returns
     -------
@@ -593,7 +706,7 @@ def simulate_Brownian_trajs(
     centroids = generate_centroids(
         num_particles=num_particles,
         fov_size=int(fov_size),
-        particle_radius = None,
+        particle_radius = 10, # Small margin to avoid edge issues, not actual radius
     )
     # Extract x,y and ignore theta.
     initial_pos = centroids[:, :2]  # Shape (num_particles, 2)
@@ -606,12 +719,20 @@ def simulate_Brownian_trajs(
     # spherical symmetry of particles.
     trajs[0, :, 2] = 0
 
-    # Generate all random increments at once.
-    increments = np.random.normal(
-        loc=0.0,
-        scale=diffusion_std,
-        size=(num_timesteps - 1, num_particles, 2)
-    )
+    # Determine per-particle diffusion std
+    if isinstance(diffusion_std, (tuple, list, np.ndarray)) and len(diffusion_std) == 2:
+        diffusion_stds = np.random.uniform(low=diffusion_std[0], high=diffusion_std[1], size=num_particles)
+    else:
+        diffusion_stds = np.full(num_particles, diffusion_std)
+
+    # Generate displacements for each trajectory
+    increments = np.zeros((num_timesteps - 1, num_particles, 2), dtype=float)
+    for i in range(num_particles):
+        increments[:, i, :] = np.random.normal(
+            loc=0.0,
+            scale=diffusion_stds[i],
+            size=(num_timesteps - 1, 2)
+        )
 
     # Cumulative sum of increments + initial positions, modulo fov_size.
     # Shape after cumsum: (T-1, N, 2).
@@ -621,58 +742,136 @@ def simulate_Brownian_trajs(
 
     # Fill trajectories for t = 1 .. T-1.
     trajs[1:, :, :2] = positions
-    # Time coordinate broadcast.
+    # # Time coordinate broadcast.
     trajs[:, :, 2] = np.arange(num_timesteps)[:, None]
+
+    # Break trajectories at periodic-boundary crossings
+    T = num_timesteps
+    segments = []
+
+    for j in range(num_particles):
+        x = trajs[:, j, 0]
+        y = trajs[:, j, 1]
+        frames = trajs[:, j, 2]
+
+        dx = np.abs(x[1:] - x[:-1])
+        dy = np.abs(y[1:] - y[:-1])
+
+        # Correct wrap detection for periodic boundaries
+        wrap = (dx > fov_size / 2) | (dy > fov_size / 2)
+        cut_idx = np.where(wrap)[0]
+
+        # Segment boundaries
+        boundaries = [-1, *cut_idx, T - 1]
+
+        for k in range(len(boundaries) - 1):
+            start = boundaries[k] + 1
+            end = boundaries[k + 1] + 1  # end is exclusive
+
+            if end - start < min_length:
+                continue
+
+            seg = np.full((T, 3), np.nan)
+            seg[start:end, 0] = x[start:end]
+            seg[start:end, 1] = y[start:end]
+            seg[start:end, 2] = frames[start:end]
+
+            segments.append(seg)
+
+    if len(segments) == 0:
+        return np.zeros((T, 0, 3))
+
+    return np.stack(segments, axis=1)
+
+
+def apply_blinking(
+    trajs: np.ndarray,
+    trim_max: int = 5,
+    p: float = 0.5,
+    drop_prob: float = 0.05,
+    max_gap: int = 2,
+) -> np.ndarray:
+    """
+    Apply per-particle birth/death and blinking to Brownian trajectories.
+
+    Dropped detections are represented by NaNs in x,y.
+    """
+    trajs = trajs.copy()
+    T, N, _ = trajs.shape
+
+    for i in range(N):
+        keep_mask = np.zeros(T, dtype=bool)
+
+        # Birth and death (same p)
+        t_birth = min(np.random.geometric(p) - 1, trim_max)
+        t_death = T - 1 - min(np.random.geometric(p) - 1, trim_max)
+        if t_birth > t_death:
+            trajs[:, i, 0:2] = np.nan
+            continue
+
+        keep_mask[t_birth : t_death + 1] = True
+
+        # Blinking
+        drop_attempt = np.zeros(T, dtype=bool)
+        drop_attempt[t_birth : t_death + 1] = (
+            np.random.rand(t_death - t_birth + 1) < drop_prob
+        )
+
+        gap = 0
+        for t in range(t_birth, t_death + 1):
+            if drop_attempt[t]:
+                if gap < max_gap:
+                    keep_mask[t] = False
+                    gap += 1
+                else:
+                    gap = 0
+            else:
+                gap = 0
+
+        # Apply mask
+        trajs[~keep_mask, i, 0:2] = np.nan
 
     return trajs
 
-def traj_break(
-    trajs: np.ndarray,
-    fov_size: int,
-    num_particles: int,
-) -> list[np.ndarray]:
-    """Break trajectories when particles leave and re-enter the FOV.
 
-    This function splits each ground truth trajectory into sub-trajectories 
-    that remain within the the field of view (FOV), by detecting large jumps 
-    in position.
+def trajs_array_to_list(
+    trajs: np.ndarray,
+    min_length: int = 5,
+) -> list[np.ndarray]:
+    """
+    Convert a (T, N, 3) trajectory array into a list of trajectories
+    by removing NaNs.
 
     Parameters
     ----------
     trajs : np.ndarray
-        Trajectories of shape (T, N, 3), where the last dimension 
-        is (x, y, frame).
-    fov_size : int
-        Size of the square field of view, i.e., the image (in pixels).
-    num_particles : int
-        Total number of particles in the simulation.
+        Array of shape (T, N, 3) with [x, y, frame].
+        NaNs indicate trajectory breaks.
+    min_length : int
+        Minimum number of points to keep a trajectory.
 
     Returns
     -------
     list of np.ndarray
-        List of valid trajectory segments (with shape (t_i, 3): [frame, y, x]) 
-        that stayed within FOV.
-    
+        List of trajectories with shape (t_i, 3): [frame, y, x].
     """
 
-    trajs_list = []
-    trajs_n = trajs[:, :, [2, 0, 1]]  # swap axes, frame first
-    for j in range(num_particles):
-        dx = np.abs(trajs[1:, j, 0] - trajs[:-1, j, 0])
-        dy = np.abs(trajs[1:, j, 1] - trajs[:-1, j, 1])
+    traj_list: list[np.ndarray] = []
 
-        # Identify jumps indicating FOV exit/re-entry.
-        jump_indices = np.where(
-            (dx > 0.75 * fov_size) | (dy > 0.75 * fov_size)
-        )[0]
-        boundaries = list(np.unique((-1, len(dx) + 1, *jump_indices)))
+    T, N, _ = trajs.shape
 
-        # Split into segments.
-        for k in range(len(boundaries) - 1):
-            start = boundaries[k] + 1
-            end = boundaries[k + 1]
-            if (end - start) >= 5:  # Prevent empty slices and shorter than 5
-                segment = trajs_n[start:end, j, :]
-                trajs_list.append(segment)
+    for j in range(N):
+        # Extract one trajectory column
+        traj = trajs[:, j, :]
 
-    return trajs_list
+        # Keep only rows where x is not NaN
+        valid = ~np.isnan(traj[:, 0])
+        traj_valid = traj[valid]
+
+        if len(traj_valid) < min_length:
+            continue
+
+        # Reorder to [frame, y, x] if desired
+        traj_list.append(traj_valid[:, [2, 0, 1]])
+
+    return traj_list
