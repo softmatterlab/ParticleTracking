@@ -412,7 +412,7 @@ class GraphDataset(torch.utils.data.Dataset):
         edge_index = edge_index[:, edge_mask] - edge_index[:, edge_mask].min()
 
         return_graph = Data(
-            x = node_attr, 
+            x = node_attr[node_mask], 
             edge_index = edge_index, 
             edge_attr = graph.edge_attr[edge_mask],
             distance = graph.edge_attr[edge_mask,0:1], 
