@@ -289,16 +289,16 @@ def transform_to_video(
     #     # trajectory is (T, 3) = [x, y, blink_flag]
     #     return dt.units.pixel * trajectory[sequence_step, :2]
 
-    def _seq_position(trajectory, sequence_step):
+    def _seq_position(trajectory, sequence_index):
         # trajectory = [x, y, invisible_flag]
-        if trajectory[sequence_step, 2] > 0.5:
+        if trajectory[sequence_index, 2] > 0.5:
             # Move particle far outside the image
             return dt.units.pixel * np.array([-10, -10])
-        return dt.units.pixel * trajectory[sequence_step, :2]
+        return dt.units.pixel * trajectory[sequence_index, :2]
 
-    def _seq_intensity(trajectory, sequence_step):
+    def _seq_intensity(trajectory, sequence_index):
         # blink_flag == 1.0 => blinking => intensity 0
-        if trajectory[sequence_step, 2] > 0.5:
+        if trajectory[sequence_index, 2] > 0.5:
             return 0.0
         if callable(_base_intensity):
             return float(_base_intensity())
@@ -349,8 +349,7 @@ def transform_to_video(
             **_shell_particle_dict,
         )
 
-        sequential_outer_particle = dt.Sequential(
-            outer_particle,
+        sequential_outer_particle = outer_particle.to_sequential(
             position=\
                 lambda trajectory, sequence_step: trajectory[sequence_step],
         )
@@ -387,13 +386,15 @@ def transform_to_video(
             New background value with added noise.
 
         """
-        
+        if previous_value is None:
+            # frame 0 initialization
+            return _background_dict["background_mean"]
+
         return (previous_values or [previous_value])[
             0
             ] + np.random.randn() * _background_dict["background_std"]
 
-    sequential_background = dt.Sequential(
-        background,
+    sequential_background = background.to_sequential(
         value=background_variation,
     )
 
@@ -408,10 +409,10 @@ def transform_to_video(
     
     # Create the sample to render: combine particles, background, and optics.
     sample = (
-        dt.Upscale(optics(
+        optics(
             combined_particle
-            ^ sequential_inner_particle.number_of_particles
-            ), factor=_core_particle_dict["upscale_factor"])
+            ^ sequential_inner_particle.number_of_particles, 
+            upscale=_core_particle_dict["upscale_factor"])
         >> dt.Background(_background_dict["background_mean"])
         >> dt.Poisson(snr=_background_dict["poisson_snr"])
         >> sequential_background
