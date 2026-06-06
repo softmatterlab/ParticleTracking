@@ -304,8 +304,7 @@ def transform_to_video(
             return float(_base_intensity())
         return float(_base_intensity)
 
-    sequential_inner_particle = dt.Sequential(
-        inner_particle,
+    sequential_inner_particle = inner_particle.to_sequential(
         position=_seq_position,
         intensity=_seq_intensity,
     )
