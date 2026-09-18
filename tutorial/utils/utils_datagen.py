@@ -190,8 +190,9 @@ def transform_to_video(
     # Default background properties.
     _background_dict = {
         "background_mean": 0,  # Mean background intensity
-        "background_std": 0,  # Std. dev. of background noise
-        "poisson_snr": 100,  # Signal-to-noise ratio for Poisson noise
+        "background_std": 1,  # Std. dev. of background noise
+        "poisson_snr": None,  # Signal-to-noise ratio for Poisson noise
+        "peak_snr": None,  # Peak signal-to-noise ratio for Gaussian noise
     }
 
     # Update the default dictionaries with user-defined properties.
@@ -407,16 +408,42 @@ def transform_to_video(
     #     / (optics.NA() * optics.resolution())
     #     ) ** 2 * (1 / np.pi)
     
-    # Create the sample to render: combine particles, background, and optics.
+    # Create the sample to render: combine particles and optics.
     sample = (
         optics(
             combined_particle
             ^ sequential_inner_particle.number_of_particles, 
-            upscale=_core_particle_dict["upscale_factor"])
-        >> dt.Background(_background_dict["background_mean"])
-        >> dt.Poisson(snr=_background_dict["poisson_snr"])
-        >> sequential_background
-    )
+            upscale=_core_particle_dict["upscale_factor"]
+            )
+) 
+    # Add noise and background if specified.
+        # Apply Poisson noise when a positive Poisson SNR is provided.
+    if (_background_dict["poisson_snr"] or 0) > 0:
+        sample = (
+            sample
+            >> dt.NormalizeMinMax(min=0, max=1)
+            >> dt.Background(_background_dict["background_mean"])
+            >> dt.Poisson(
+                snr=_background_dict["poisson_snr"],
+                background=_background_dict["background_mean"],
+            )
+        )
+
+    # Otherwise, apply the original Gaussian noise pipeline.
+    elif (_background_dict["peak_snr"] or 0) > 0:
+        sample = (
+            sample
+            >> dt.NormalizeMinMax(
+                min=0,
+                max=_background_dict["peak_snr"]**(0.5)
+                * _background_dict["background_std"],
+            )  # Peak SNR=(I_signal/Noise_std)^2
+            >> dt.Background(_background_dict["background_mean"])
+            >> dt.Gaussian(
+                sigma=_background_dict["background_std"]
+            )
+            )
+        print( f"Gaussian STD: {_background_dict["background_std"]}")
 
     if trajs.shape[1] > 1:
         # Sequentially update and resolve the sample to produce video frames.
@@ -644,7 +671,7 @@ def generate_particle_dataset(
         _ground_truth_map = create_ground_truth_map(
             ground_truth_positions,
             fov_size=fov_size,
-            sigma=probability_cloud_size / 3, 
+            sigma=probability_cloud_size / 2.5, 
             pixel_size_nm=pixel_size_nm,
         )
 
