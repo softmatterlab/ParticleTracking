@@ -256,7 +256,7 @@ def transform_to_video(
 
     trajs = trajs_filled
 
-    # -----------------------------
+    # -----------------------------ƒ
     # Inner particle (core) with blink-aware intensity
     # -----------------------------
     
@@ -443,7 +443,7 @@ def transform_to_video(
                 sigma=_background_dict["background_std"]
             )
             )
-        print( f"Gaussian STD: {_background_dict["background_std"]}")
+        # print( f"Gaussian STD: {_background_dict["background_std"]}")
 
     if trajs.shape[1] > 1:
         # Sequentially update and resolve the sample to produce video frames.
