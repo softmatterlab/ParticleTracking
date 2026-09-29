@@ -421,7 +421,7 @@ def transform_to_video(
     if (_background_dict["poisson_snr"] or 0) > 0:
         sample = (
             sample
-            >> dt.NormalizeMinMax(min=0, max=1)
+            # >> dt.NormalizeMinMax(min=0, max=1)
             >> dt.Background(_background_dict["background_mean"])
             >> dt.Poisson(
                 snr=_background_dict["poisson_snr"],
