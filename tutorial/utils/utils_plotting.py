@@ -727,11 +727,6 @@ def plot_TAMSDs(
     plt.tight_layout()
     plt.show()
 
-
-import numpy as np
-import matplotlib.pyplot as plt
-
-
 def plot_trajectory_timeline(
     gt_trajs,
     pred_trajs,
@@ -778,7 +773,7 @@ def plot_trajectory_timeline(
     gt_matched = set(gt_idx)
     pred_matched = set(pred_idx)
 
-    fig, ax = plt.subplots(figsize=(13, 6))
+    fig, ax = plt.subplots(figsize=(11, 8))
     y = 0
     all_frames = []
 
@@ -889,11 +884,23 @@ def plot_trajectory_timeline(
     ax.set_xlabel("Frame")
     ax.set_ylabel("Trajectory pair")
     ax.set_yticks([])
-    ax.set_title(
-        "Tracking timeline\n"
-        "GT: black | "
-        "Pred: blue (correct), red (localization error), orange (extra detection) | "
-        "FN: purple | FP: gray"
+    ax.set_title("Tracking timeline", pad=45)
+
+    legend_handles = [
+        mlines.Line2D([], [], color=COLORS["gt"], lw=2, label="Ground truth"),
+        mlines.Line2D([], [], color=COLORS["ok"], lw=3, label="Correct"),
+        mlines.Line2D([], [], color=COLORS["error"], lw=3, label="Localization error"),
+        mlines.Line2D([], [], color=COLORS["extra"], lw=3, label="Extra detection"),
+        mlines.Line2D([], [], color=COLORS["fn"], lw=2, label="False negative"),
+        mlines.Line2D([], [], color=COLORS["fp"], lw=2, label="False positive"),
+    ]
+
+    ax.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.01),
+        ncol=6,
+        frameon=False,
     )
 
     plt.tight_layout()
