@@ -317,15 +317,15 @@ class GraphDataset(torch.utils.data.Dataset):
         Initializes the dataset with the provided graph dataset, time
         difference, dataset size, and optional transform.
     `__call__(graph, predictions)`
-        Computes trajectories from the graph and predictions.    
-    
+        Computes trajectories from the graph and predictions.
+
     """
 
     def __init__(
         self: GraphDataset,
         graph_dataset: list,
         Dt: int,
-        dataset_size: int, 
+        dataset_size: int,
         transform: callable = None,
     ):
         """Initialize the dataset.
@@ -370,9 +370,9 @@ class GraphDataset(torch.utils.data.Dataset):
     ) -> Data:
         """Obtain a subgraph from the dataset.
 
-        This method samples a random time window (of length Dt) from a 
-        randomly chosen graph in the dataset. Only nodes and edges that fall 
-        within the selected frame window are kept. Edge indices are reindexed 
+        This method samples a random time window (of length Dt) from a
+        randomly chosen graph in the dataset. Only nodes and edges that fall
+        within the selected frame window are kept. Edge indices are reindexed
         to ensure consistency.
 
         Parameters
@@ -388,10 +388,10 @@ class GraphDataset(torch.utils.data.Dataset):
                 - edge_index : reindexed edges
                 - edge_attr : distances
                 - y : ground truth labels
-        
+
         """
 
-        graph = self.graph_dataset[np.random.randint(0, len(self.graph_dataset) - 1)]
+        graph = self.graph_dataset[np.random.randint(0, len(self.graph_dataset))]
         frames, edge_index = graph.frames, graph.edge_index
         select_frame = np.random.randint(self.Dt, frames.max() + 1)
 
@@ -401,22 +401,24 @@ class GraphDataset(torch.utils.data.Dataset):
 
         frame_pairs = torch.stack(
             [
-                frames[edge_index[0, :]], 
+                frames[edge_index[0, :]],
                 frames[edge_index[1, :]]
             ],
             axis=-1,
         )
         edge_mask = (frame_pairs >= start_frame) & (frame_pairs < select_frame)
-        edge_mask = edge_mask.all(axis=-1) 
+        edge_mask = edge_mask.all(axis=-1)
 
-        edge_index = edge_index[:, edge_mask] - edge_index[:, edge_mask].min()
+        # Reindex edges relative to the first selected node.
+        first_node = torch.where(node_mask)[0][0]
+        edge_index = edge_index[:, edge_mask] - first_node
 
         return_graph = Data(
-            x = node_attr[node_mask], 
-            edge_index = edge_index, 
+            x = node_attr[node_mask],
+            edge_index = edge_index,
             edge_attr = graph.edge_attr[edge_mask],
-            distance = graph.edge_attr[edge_mask,0:1], 
-            y = graph.y[edge_mask],  
+            distance = graph.edge_attr[edge_mask,0:1],
+            y = graph.y[edge_mask],
         )
         if self.transform: return_graph = self.transform(return_graph)
         return return_graph
@@ -520,34 +522,46 @@ class RandomFlip:
         return graph
 
 class NodeDropout:
-    """Removal (dropout) of random nodes to simulate missing frames.
+    """Removal (dropout) of random nodes to simulate missing detections.
 
-    This class randomly removes nodes from a graph to simulate missing frames.
-    The dropout is performed by randomly selecting a subset of nodes to remove
-    based on a specified dropout rate. The edges, weights, labels, and
-    distances connected to the removed nodes are also removed. The modified
-    graph is returned with the remaining nodes and edges. The dropout is
-    performed in place, and the original graph is unchanged. The dropout rate
-    is specified as a parameter, and the random selection of nodes to remove is
-    performed using a uniform distribution. The removed nodes are not restored
-    to their original positions, and the modified graph is returned with the
-    remaining nodes and edges.
-  
+    This class randomly removes nodes from a graph to simulate missing
+    detections. The dropout is performed by randomly selecting a subset of
+    nodes to remove based on a specified dropout rate. The edges, weights,
+    labels, and distances connected to the removed nodes are also removed.
+    The remaining nodes and edges are reindexed to preserve graph consistency.
+    The original graph is unchanged.
+
     Parameters
     ----------
-    graph : torch_geometric.data.Data
-        The input graph object containing node features and other
-        attributes.
-  
+    dropout_rate : float, optional
+        Probability of removing each node. Default is 0.05.
+
     Methods
     -------
+    `__init__(dropout_rate)`
+        Initializes the node dropout with the specified dropout rate.
     `__call__(graph)`
         Performs the node dropout on the input graph.
 
     """
 
+    def __init__(
+        self: NodeDropout,
+        dropout_rate: float = 0.05,
+    ) -> None:
+        """Initialize the node dropout.
+
+        Parameters
+        ----------
+        dropout_rate : float, optional
+            Probability of removing each node. Default is 0.05.
+
+        """
+
+        self.dropout_rate = dropout_rate
+
     def __call__(
-        self: NodeDropout, 
+        self: NodeDropout,
         graph: "torch_geometric.data.Data",
     ) -> "torch_geometric.data.Data":
         """Perform the node dropout.
@@ -557,49 +571,57 @@ class NodeDropout:
         graph : torch_geometric.data.Data
             The input graph object containing node features and other
             attributes.
-    
+
         Returns
         -------
         torch_geometric.data.Data
-            The modified graph object with the remaining nodes and edges after
-            the dropout.
+            The modified graph object with the remaining nodes and edges
+            after the dropout.
 
         """
 
         # Ensure original graph is unchanged.
         graph = graph.clone()
 
-        # Specify node dropout rate.
-        dropout_rate = 0.05
-
         # Get indices of random nodes.
         idx = np.array(list(range(len(graph.x))))
-        dropped_idx = idx[np.random.rand(len(graph.x)) < dropout_rate]
+        dropped_idx = idx[np.random.rand(len(graph.x)) < self.dropout_rate]
+
+        # Compute mask of nodes to keep.
+        node_mask = np.ones(len(graph.x), dtype=bool)
+        node_mask[dropped_idx] = False
+        node_mask = torch.tensor(node_mask, device=graph.x.device)
 
         # Compute connectivity matrix to dropped nodes.
-        for dropped_node in dropped_idx:
-            edges_connected_to_removed_node = np.any(
-                np.array(graph.edge_index) == dropped_node, axis=0
-            )
+        edge_index = graph.edge_index
+        edge_mask = node_mask[edge_index[0]] & node_mask[edge_index[1]]
 
-        # Remove edges, weights, labels connected to dropped nodes with the
-        # bitwise not operator '~'.
-        graph.edge_index = \
-            graph.edge_index[:, ~edges_connected_to_removed_node]
-        graph.edge_attr = graph.edge_attr[~edges_connected_to_removed_node]
-        graph.distance = graph.distance[~edges_connected_to_removed_node]
-        graph.y = graph.y[~edges_connected_to_removed_node]
+        # Reindex the remaining nodes.
+        node_mapping = torch.full(
+            (len(graph.x),), -1, dtype=torch.long,
+            device=edge_index.device,
+        )
+        node_mapping[node_mask] = torch.arange(
+            node_mask.sum(), device=edge_index.device
+        )
+
+        # Remove nodes and edges connected to dropped nodes.
+        graph.x = graph.x[node_mask]
+        graph.edge_index = node_mapping[edge_index[:, edge_mask]]
+        graph.edge_attr = graph.edge_attr[edge_mask]
+        graph.distance = graph.distance[edge_mask]
+        graph.y = graph.y[edge_mask]
 
         return graph
 
-
 class ComputeTrajectories:
     """
-    Reconstruct trajectories from Sinkhorn-based edge predictions.
+    Reconstruct trajectories from softmax-based edge predictions.
 
-    The Sinkhorn head already enforces near one-to-one assignments
-    between sources and targets. This class thresholds low-probability
-    links and builds connected components as trajectories.
+    The SoftmaxHead assigns probabilities to candidate outgoing edges
+    for each source node. This class thresholds low-probability links,
+    enforces one-to-one assignments between sources and targets, and
+    builds connected components as trajectories.
     """
 
     def __init__(self, p_min: float = 0.5):
@@ -612,7 +634,7 @@ class ComputeTrajectories:
         graph : object
             Graph-like structure with attributes such as 'frames'.
         predictions : tuple
-            Output of the Sinkhorn head:
+            Output of the SoftmaxHead:
               (probs_real, edge_index, probs_all, all_src, dummy_mask)
 
         Returns
@@ -630,21 +652,23 @@ class ComputeTrajectories:
 
         # Move to CPU numpy
         edge_index = edge_index.detach().cpu().numpy()
-        probs_real = probs_real.detach().cpu().numpy().squeeze()
+        probs_real = probs_real.detach().cpu().numpy().reshape(-1)
 
         # Select edges above probability threshold
         valid = probs_real >= self.p_min
         edges = edge_index[:, valid].T
         scores = probs_real[valid]
 
-        # Optional: enforce at most one incoming edge per target
+        # Enforce at most one outgoing and incoming edge per node
         order = np.argsort(-scores)
+        used_sources = set()
         used_targets = set()
         pruned_edges = []
         for i in order:
             s, t = edges[i]
-            if t not in used_targets:
+            if s not in used_sources and t not in used_targets:
                 pruned_edges.append((int(s), int(t)))
+                used_sources.add(s)
                 used_targets.add(t)
 
         # Build graph from pruned edges
@@ -654,7 +678,6 @@ class ComputeTrajectories:
         # Extract connected components as trajectories
         trajectories = list(nx.connected_components(pruned_graph))
         return trajectories
-
 
 def make_list(
     trajs_from_graph: list[int],
@@ -704,7 +727,6 @@ def make_list(
         trajs_list.append(traj)
     return trajs_list
 
-
 class SoftmaxHead(DeeplayModule):
     """
     Deterministic per-source softmax head with learnable per-node dummy logits.
@@ -715,39 +737,15 @@ class SoftmaxHead(DeeplayModule):
       probs_all  : [N_edges + N_nodes]
       all_src    : [N_edges + N_nodes]
       dummy_mask : [N_edges + N_nodes]
-      node_attr  : passed-through node attributes (for losses using coordinates)
     """
 
-    def __init__(self, base_head, eps=1e-8):
+    def __init__(self, base_head, node_dim=96, eps=1e-8):
         super().__init__()
         self.base_head = base_head
         self.eps = eps
 
-        # will be lazy-initialized based on node_attr dimension
-        self.dummy_mlp = None
-
-        # optional: bias for real edges initialized negative
-        self.init_real_bias = -2.0
-        self.init_dummy_bias = 2.0
-
-    def _lazy_init_dummy(self, node_attr):
-        """Create dummy_mlp once we know the dimensionality of node attributes."""
-        if self.dummy_mlp is not None:
-            return
-
-        dim = node_attr.shape[1]
-        device = node_attr.device
-
-        self.dummy_mlp = nn.Linear(dim, 1, bias=True).to(device)
-
-        # Initialize: dummy should win early in training
-        nn.init.constant_(self.dummy_mlp.weight, 0.0)
-        nn.init.constant_(self.dummy_mlp.bias, self.init_dummy_bias)
-
-        # Also bias the last layer of the base head (if accessible)
-        if hasattr(self.base_head, "weight"):
-            # it's a Linear layer
-            nn.init.constant_(self.base_head.bias, self.init_real_bias)
+        # Initialize dummy MLP based on node attribute dimension.
+        self.dummy_mlp = nn.Linear(node_dim, 1, bias=True)
 
     def forward(self, inputs):
         edge_attr, edge_index, node_attr = inputs
@@ -755,12 +753,8 @@ class SoftmaxHead(DeeplayModule):
         num_nodes = node_attr.shape[0]
         device = src.device
 
-        # lazy create dummy MLP after dimension known
-        self._lazy_init_dummy(node_attr)
-
         # ---- Real-edge logits ----
         logits = self.base_head(edge_attr).view(-1)  # [N_edges]
-        logits = logits.clamp(-10, 10)
 
         # ---- Dummy logits ----
         dummy_logits = self.dummy_mlp(node_attr).view(-1)  # [N_nodes]
@@ -771,20 +765,11 @@ class SoftmaxHead(DeeplayModule):
         dummy_mask = torch.arange(all_logits.numel(), device=device) >= logits.numel()
 
         # ---- Per-source softmax ----
+        # Bound logits to prevent numerical overflow.
+        all_logits = all_logits.clamp(-20, 20)
 
-        # Scatter-reduce "amax" is not supported on MPS → manual segment max
-        max_per_src = torch.full((num_nodes,), float("-inf"), device=src.device)
-
-        # Compute maximum logit per source
-        # For each entry i: max_per_src[all_src[i]] = max(old, all_logits[i])
-        max_per_src = max_per_src.index_put_(
-            (all_src,),
-            torch.maximum(max_per_src[all_src], all_logits),
-            accumulate=False
-        )
-
-        # Exponentiate shifted logits (numerically stable)
-        exp_logits = torch.exp(all_logits - max_per_src[all_src])
+        # Exponentiate logits.
+        exp_logits = torch.exp(all_logits)
 
         # Per-source sum
         sum_per_src = torch.zeros(num_nodes, device=src.device)
@@ -792,17 +777,11 @@ class SoftmaxHead(DeeplayModule):
 
         # Softmax
         probs_all = exp_logits / (sum_per_src[all_src] + self.eps)
-        probs_all = probs_all.clamp(min=self.eps, max=1.0)
 
-        # real-edge probabilities for training and metrics
-        probs_real = probs_all[~dummy_mask].unsqueeze(-1)   # [N_edges, 1]
-
-
-        # ---- Extract real-edge probs ----
+        # Real-edge probabilities for training and metrics
         probs_real = probs_all[~dummy_mask].unsqueeze(-1)  # [N_edges, 1]
 
         return (probs_real, edge_index, probs_all, all_src, dummy_mask)
-
 
 class NodewiseNLLLoss(nn.Module):
     """
