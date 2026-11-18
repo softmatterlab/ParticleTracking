@@ -38,14 +38,16 @@ Functions:
 
 from __future__ import annotations
 
-from math import pi, sin, cos
+from math import cos, pi, sin
+
 import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
+import torch_geometric
+from deeplay import DeeplayModule
 from torch import nn
 from torch_geometric.data import Data
-from deeplay import DeeplayModule
 
 
 class GraphFromTrajectories:
@@ -707,99 +709,83 @@ def make_list(
 
 class SoftmaxHead(DeeplayModule):
     """
-    Deterministic per-source softmax head with learnable per-node dummy logits.
+    Per-source softmax head: each node's outgoing edges compete against a dummy
+    'no successor' option, so every node's candidates form one distribution.
+    The dummy logit is a fixed value to beat unless `train_dummy=True`.
 
-    Output:
+    Forward return:
       probs_real : [N_edges, 1]
       edge_index : [2, N_edges]
       probs_all  : [N_edges + N_nodes]
       all_src    : [N_edges + N_nodes]
       dummy_mask : [N_edges + N_nodes]
-      node_attr  : passed-through node attributes (for losses using coordinates)
     """
 
-    def __init__(self, base_head, eps=1e-8):
+    def __init__(
+            self,
+            base_head,
+            node_features=None,
+            init_dummy_bias=2.0,
+            train_dummy=True,
+            softclamp_cap=20,
+    ):
         super().__init__()
         self.base_head = base_head
-        self.eps = eps
+        self.softclamp_cap = softclamp_cap
 
-        # will be lazy-initialized based on node_attr dimension
-        self.dummy_mlp = None
+        if node_features is None:
+            node_features = getattr(base_head, "in_features", None)
+        if node_features is None:
+            raise ValueError(
+                "SoftmaxHead needs `node_features` (the width of node_attr) to build "
+                "`dummy_mlp` eagerly, so its parameters exist before the optimizer."
+            )
 
-        # optional: bias for real edges initialized negative
-        self.init_real_bias = -2.0
-        self.init_dummy_bias = 2.0
-
-    def _lazy_init_dummy(self, node_attr):
-        """Create dummy_mlp once we know the dimensionality of node attributes."""
-        if self.dummy_mlp is not None:
-            return
-
-        dim = node_attr.shape[1]
-        device = node_attr.device
-
-        self.dummy_mlp = nn.Linear(dim, 1, bias=True).to(device)
-
-        # Initialize: dummy should win early in training
+        self.dummy_mlp = nn.Linear(node_features, 1, bias=True).to(base_head.device)
         nn.init.constant_(self.dummy_mlp.weight, 0.0)
-        nn.init.constant_(self.dummy_mlp.bias, self.init_dummy_bias)
-
-        # Also bias the last layer of the base head (if accessible)
-        if hasattr(self.base_head, "weight"):
-            # it's a Linear layer
-            nn.init.constant_(self.base_head.bias, self.init_real_bias)
+        nn.init.constant_(self.dummy_mlp.bias, init_dummy_bias)
+        self.dummy_mlp.requires_grad_(train_dummy)
 
     def forward(self, inputs):
         edge_attr, edge_index, node_attr = inputs
-        src = edge_index[0]
         num_nodes = node_attr.shape[0]
-        device = src.device
-
-        # lazy create dummy MLP after dimension known
-        self._lazy_init_dummy(node_attr)
+        src_nodes = edge_index[0]
+        src_node_order = torch.argsort(src_nodes, stable=True)
 
         # ---- Real-edge logits ----
         logits = self.base_head(edge_attr).view(-1)  # [N_edges]
-        logits = logits.clamp(-10, 10)
+        logits = self.softclamp_cap * torch.tanh(logits / self.softclamp_cap)
+        src_sorted, logits_sorted = src_nodes[src_node_order], logits[src_node_order] # Sort logits by source
 
-        # ---- Dummy logits ----
-        dummy_logits = self.dummy_mlp(node_attr).view(-1)  # [N_nodes]
+        # ---- Create dense matrix with row = source node, columns 0, 1, ..., k-1 = its edges ----
+        out_edges_per_src = torch.bincount(src_sorted, minlength=num_nodes)
+        edges_accumul = torch.cumsum(out_edges_per_src, 0) - out_edges_per_src
+        cols = torch.arange(src_sorted.numel(), device=src_nodes.device) - edges_accumul[src_sorted]
+        K = int(out_edges_per_src.max()) + 1
+        logit_matrix = torch.full((num_nodes, K), float("-inf"), device=src_nodes.device, dtype=logits.dtype)
+        logit_matrix[src_sorted, cols] = logits_sorted
 
-        # ---- Combine all ----
-        all_logits = torch.cat([logits, dummy_logits], dim=0)  # [E + N]
-        all_src = torch.cat([src, torch.arange(num_nodes, device=device)], dim=0)
-        dummy_mask = torch.arange(all_logits.numel(), device=device) >= logits.numel()
+        # ---- Add dummy logits at column k ----
+        dummy_logits = self.dummy_mlp(node_attr).view(-1)
+        if self.dummy_mlp.weight.requires_grad:
+            dummy_logits = self.softclamp_cap * torch.tanh(dummy_logits / self.softclamp_cap)
+        node_idx = torch.arange(num_nodes, device=src_nodes.device)
+        logit_matrix[node_idx, out_edges_per_src] = dummy_logits
 
-        # ---- Per-source softmax ----
+        # ---- Per source softmax ----
+        prob_matrix = torch.softmax(logit_matrix, dim=1)
 
-        # Scatter-reduce "amax" is not supported on MPS → manual segment max
-        max_per_src = torch.full((num_nodes,), float("-inf"), device=src.device)
+        # ---- Get edge and dummy probabilities ----
+        probs_sorted = prob_matrix[src_sorted, cols]  # [N_edges], grouped by source
+        probs_edges = torch.empty_like(probs_sorted)
+        probs_edges[src_node_order] = probs_sorted  
+        probs_dummy = prob_matrix[node_idx, out_edges_per_src] 
 
-        # Compute maximum logit per source
-        # For each entry i: max_per_src[all_src[i]] = max(old, all_logits[i])
-        max_per_src = max_per_src.index_put_(
-            (all_src,),
-            torch.maximum(max_per_src[all_src], all_logits),
-            accumulate=False
-        )
-
-        # Exponentiate shifted logits (numerically stable)
-        exp_logits = torch.exp(all_logits - max_per_src[all_src])
-
-        # Per-source sum
-        sum_per_src = torch.zeros(num_nodes, device=src.device)
-        sum_per_src.index_add_(0, all_src, exp_logits)
-
-        # Softmax
-        probs_all = exp_logits / (sum_per_src[all_src] + self.eps)
-        probs_all = probs_all.clamp(min=self.eps, max=1.0)
-
-        # real-edge probabilities for training and metrics
-        probs_real = probs_all[~dummy_mask].unsqueeze(-1)   # [N_edges, 1]
-
-
-        # ---- Extract real-edge probs ----
-        probs_real = probs_all[~dummy_mask].unsqueeze(-1)  # [N_edges, 1]
+        # ---- Collect real and combined probabilities with dummy mask ----
+        probs_real = probs_edges.unsqueeze(-1)  # [N_edges, 1]
+        probs_all = torch.cat([probs_edges, probs_dummy], dim=0)  # [N_edges + N_nodes]
+        all_src = torch.cat([src_nodes, node_idx], dim=0)
+        dummy_mask = torch.arange(probs_all.numel(), device=src_nodes.device) >= probs_edges.numel()
 
         return (probs_real, edge_index, probs_all, all_src, dummy_mask)
 
