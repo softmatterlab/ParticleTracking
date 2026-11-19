@@ -784,10 +784,10 @@ class SoftmaxHead(DeeplayModule):
         # ---- Collect real and combined probabilities with dummy mask ----
         probs_real = probs_edges.unsqueeze(-1)  # [N_edges, 1]
         probs_all = torch.cat([probs_edges, probs_dummy], dim=0)  # [N_edges + N_nodes]
-        all_src = torch.cat([src_nodes, node_idx], dim=0)
+        src_all = torch.cat([src_nodes, node_idx], dim=0)
         dummy_mask = torch.arange(probs_all.numel(), device=src_nodes.device) >= probs_edges.numel()
 
-        return (probs_real, edge_index, probs_all, all_src, dummy_mask)
+        return (probs_real, edge_index, probs_all, src_all, dummy_mask)
 
 
 class NodewiseNLLLoss(nn.Module):
@@ -803,48 +803,27 @@ class NodewiseNLLLoss(nn.Module):
         L = - Σ_i log p(correct_edge_i)
 
     """
-    def __init__(self, eps=1e-12):
+    def __init__(self):
         super().__init__()
-        self.eps = eps
 
     def forward(self, y_hat, y):
-        probs_real, edge_index, probs_all, all_src, dummy_mask = y_hat
-        src = edge_index[0]
-        device = probs_all.device
+        _, edge_index, probs_all, src_all, dummy_mask = y_hat  # src_all includes a dummy for each node
+        src_nodes = edge_index[0]
+        num_nodes = int(src_all.max()) + 1
 
-        # Prepare counts
-        num_nodes = int(all_src.max().item()) + 1
-
-        # Ground truth for real edges only: [N_edges]
-        y = y.view(-1).float()
-
-        # Build full y_all including dummy labels
+        # ---- Build full ground truth with dummy labels ----
+        y = y.view(-1).float()  # Ground truth for real edges only: [N_edges]
         y_all = torch.zeros_like(probs_all)
-
-        # Real edges: copy ground truth
         y_all[~dummy_mask] = y
 
-        # Identify which source nodes have a real target (positive)
-        has_real = torch.zeros(num_nodes, device=device)
-        has_real.index_add_(0, src, y)
-        has_real = has_real > 0
+        n_real = torch.zeros(num_nodes, device=probs_all.device)
+        n_real.index_add_(0, src_nodes, y)  # source nodes with at least one real target
+        y_all[dummy_mask] = (n_real == 0).float()
 
-        # Dummy edges are positive only when the node has *no* real outgoing edges
-        dummy_src = all_src[dummy_mask]
-        y_all[dummy_mask] = (~has_real[dummy_src]).float()
+        # ---- Calculate per-source cross-entropy: -log p of the correct candidate, summed. ----
+        logp = torch.log(probs_all)
+        correct_candidates = y_all > 0.5
+        loss_per_src = torch.zeros(num_nodes, device=probs_all.device)
+        loss_per_src.index_add_(0, src_all[correct_candidates], -logp[correct_candidates])
 
-        # This ensures exactly one positive per source
-        # Now compute categorical cross-entropy over each source group.
-        logp = torch.log(probs_all.clamp(self.eps, 1.0))
-
-        # Reduce -log p(correct) grouped by sources
-        loss_per_src = torch.zeros(num_nodes, device=device)
-
-        pos_src = all_src[y_all > 0.5]
-        pos_logp = logp[y_all > 0.5]
-
-        loss_per_src.index_add_(0, pos_src, -pos_logp)
-
-        # Normalize over sources that actually have predictions
-        unique_sources = torch.unique(all_src)
-        return loss_per_src[unique_sources].mean()
+        return loss_per_src.mean()
