@@ -38,6 +38,7 @@ Functions:
 
 from __future__ import annotations
 
+import warnings
 from math import cos, pi, sin
 
 import networkx as nx
@@ -46,6 +47,7 @@ import pandas as pd
 import torch
 import torch_geometric
 from deeplay import DeeplayModule
+from scipy.optimize import linear_sum_assignment
 from torch import nn
 from torch_geometric.data import Data
 
@@ -423,6 +425,7 @@ class GraphDataset(torch.utils.data.Dataset):
         if self.transform: return_graph = self.transform(return_graph)
         return return_graph
 
+
 class RandomRotation:
     """Random rotation to augment training data.
     
@@ -596,25 +599,117 @@ class NodeDropout:
 
 
 class ComputeTrajectories:
-    """
-    Reconstruct trajectories from Sinkhorn-based edge predictions.
+    """Links trajectories from the softmax head's edge predictions.
 
-    The Sinkhorn head already enforces near one-to-one assignments
-    between sources and targets. This class thresholds low-probability
-    links and builds connected components as trajectories.
+    Keeps a subset of the predicted edges -- at most one incoming per node,
+    and optionally at most one outgoing -- then returns the connected
+    components as trajectories. Edges run strictly forward in time.
+
+    Parameters
+    ----------
+    p_min : float
+        Minimum probability for an edge to be considered. Use 0.0 to drop the
+        flat floor and let the method weigh each edge against its source's
+        dummy ("no successor") probability instead.
+    method : {"greedy", "lap"}
+        Linking algorithm used to select Which edges to keep among those competing for
+        the same node. "greedy" accepts them in order of decreasing probability;
+        "lap" solves the assignment problem for the globally best set -- slower,
+        but it does not let an early commitment block a better pairing.
+    enforce_one_to_one : bool
+        Whether a node may keep at most one outgoing edge, which forbids a
+        trajectory from splitting. Ignored for "lap", which is one-to-one
+        by construction.
+
     """
 
-    def __init__(self, p_min: float = 0.5):
+    _METHODS = ("greedy", "lap")
+
+    def __init__(
+        self,
+        p_min: float = 0.5,
+        method: str = "greedy",
+        enforce_one_to_one: bool = False,
+    ):
+        if method not in self._METHODS:
+            raise ValueError(
+                f"method must be one of {self._METHODS}, got {method!r}"
+            )
+        if method == "lap" and not enforce_one_to_one:
+            warnings.warn("method='lap' is always one-to-one; ignoring "
+                          "enforce_one_to_one=False."
+            )
+            enforce_one_to_one = True
         self.p_min = p_min
+        self.method = method
+        self.enforce_one_to_one = enforce_one_to_one
 
-    def __call__(self, graph, predictions):
+    def greedy(self, edges: np.ndarray, scores: np.ndarray):
+        """Accept edges from the highest probability down.
+
+        An edge is kept only if its target has no incoming edge yet; If
+        enforce_one_to_one is True, sources can only have one outgoing edge.
+
+        This visits every candidate, so the result is *maximal*: no edge can be
+        added afterwards without breaking a constraint. It is not *maximum*: an
+        early commitment can consume a slot that a better pairing needed.
+
+        """
+
+        score_order = np.argsort(-scores)
+
+        # One incoming edge per target. Optionally, enforce one outgoing edge per source
+        used_sources, used_targets = set(), set()
+        pruned_edges = []
+        for score_idx in score_order:
+            source, target = edges[score_idx]
+            if target in used_targets:
+                continue
+            if self.enforce_one_to_one and source in used_sources:
+                continue
+            pruned_edges.append((int(source), int(target)))
+            used_sources.add(source)
+            used_targets.add(target)
+
+        return pruned_edges
+
+    def lap(self, edges: np.ndarray, scores: np.ndarray, reference: np.ndarray):
+        """Keep the globally best one-to-one set of edges.
+
+        Solves the linear assignment problem, as described in Crouse, David F.
+        (DOI:10.1109/TAES.2016.140952). Sources and targets share one compacted
+        index, so the one-row-one-column property of an assignment caps both
+        the outgoing and the incoming edges of every node at one.
+
+        """
+
+        # Give sources and targets a single shared index, so that row i and
+        # column i of the cost matrix refer to the same node.
+        nodes = np.unique(edges)
+        rows = np.searchsorted(nodes, edges[:, 0])
+        cols = np.searchsorted(nodes, edges[:, 1])
+
+        # Clip away from zero to keep the logarithms finite.
+        scores = np.maximum(scores, 1e-12)
+        reference = np.maximum(reference, 1e-12)
+
+        # Compute the cost of an edge with the score relative to the reference
+        cost = np.zeros((len(nodes), len(nodes)))
+        cost[rows, cols] = -np.log(scores / reference)
+
+        row_index, col_index = linear_sum_assignment(cost)
+        pays_off = cost[row_index, col_index] < 0
+        return [
+            (int(nodes[row]), int(nodes[col]))
+            for row, col in zip(row_index[pays_off], col_index[pays_off])
+        ]
+
+    def __call__(self, predictions):
         """
         Parameters
         ----------
-        graph : object
-            Graph-like structure with attributes such as 'frames'.
         predictions : tuple
-            Output of the Sinkhorn head:
+            Output of the Softmax head:
               (probs_real, edge_index, probs_all, all_src, dummy_mask)
 
         Returns
@@ -622,32 +717,36 @@ class ComputeTrajectories:
         list[set[int]]
             List of trajectories, each as a set of node indices.
         """
-        (
-            probs_real,
-            edge_index,
-            probs_all,
-            all_src,
-            dummy_mask,
-        ) = predictions
+        probs_real, edge_index, probs_all, src_all, dummy_mask = (
+            tensor.detach().cpu().numpy() for tensor in predictions
+        )
+        probs_real = probs_real.squeeze(-1)
 
-        # Move to CPU numpy
-        edge_index = edge_index.detach().cpu().numpy()
-        probs_real = probs_real.detach().cpu().numpy().squeeze()
+        # Probability an edge must beat to be worth creating: the flat floor,
+        # or each source's own dummy ("no successor") when p_min is 0.
+        if self.p_min > 0.0:
+            floor = np.full(edge_index.shape[1], self.p_min)
+        else:
+            dummy_probs = np.empty(int(dummy_mask.sum()))
+            dummy_probs[src_all[dummy_mask]] = probs_all[dummy_mask]
+            floor = dummy_probs[edge_index[0]]
 
-        # Select edges above probability threshold
-        valid = probs_real >= self.p_min
-        edges = edge_index[:, valid].T
-        scores = probs_real[valid]
+        # Select edges at or above probability threshold
+        valid_probs = probs_real >= floor
+        edges = edge_index[:, valid_probs].T
+        scores = probs_real[valid_probs]
 
-        # Optional: enforce at most one incoming edge per target
-        order = np.argsort(-scores)
-        used_targets = set()
-        pruned_edges = []
-        for i in order:
-            s, t = edges[i]
-            if t not in used_targets:
-                pruned_edges.append((int(s), int(t)))
-                used_targets.add(t)
+        if len(scores) == 0:
+            return []
+
+        if self.method == "greedy":
+            pruned_edges = self.greedy(edges, scores)
+        elif self.method == "lap":
+            pruned_edges = self.lap(edges, scores, floor[valid_probs])
+        else:
+            raise ValueError(
+                f"method must be one of {self._METHODS}, got {self.method!r}"
+            )
 
         # Build graph from pruned edges
         pruned_graph = nx.Graph()
