@@ -29,23 +29,31 @@ Classes:
 
 - `ComputeTrajectories`: Calculates trajectories from MAGIK output.
 
+- `SoftmaxHead`: Turns edge logits into one distribution per source node.
+
+- `NodewiseNLLLoss`: Cross-entropy over each source node's candidates.
+
 Functions:
 
-- `make_list`: Converts MAGIK trajectories from graph format to a list of 
+- `make_list`: Converts MAGIK trajectories from graph format to a list of
     NumPy arrays.
 
 """
 
 from __future__ import annotations
 
-from math import pi, sin, cos
+import warnings
+from math import cos, pi, sin
+
 import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
+import torch_geometric
+from deeplay import DeeplayModule
+from scipy.optimize import linear_sum_assignment
 from torch import nn
 from torch_geometric.data import Data
-from deeplay import DeeplayModule
 
 
 class GraphFromTrajectories:
@@ -421,6 +429,7 @@ class GraphDataset(torch.utils.data.Dataset):
         if self.transform: return_graph = self.transform(return_graph)
         return return_graph
 
+
 class RandomRotation:
     """Random rotation to augment training data.
     
@@ -594,58 +603,171 @@ class NodeDropout:
 
 
 class ComputeTrajectories:
-    """
-    Reconstruct trajectories from Sinkhorn-based edge predictions.
+    """Links trajectories from the softmax head's edge predictions.
 
-    The Sinkhorn head already enforces near one-to-one assignments
-    between sources and targets. This class thresholds low-probability
-    links and builds connected components as trajectories.
+    Keeps a subset of the predicted edges -- at most one incoming per node,
+    and optionally at most one outgoing -- then returns the connected
+    components as trajectories. Edges run strictly forward in time.
+
+    Parameters
+    ----------
+    p_min : float
+        Minimum probability for an edge to be considered. Use 0.0 to drop the
+        flat floor and let the method weigh each edge against its source's
+        dummy ("no successor") probability instead.
+    method : {"greedy", "lap"}
+        Linking algorithm used to pick between the edges competing for the
+        same node. "greedy" accepts them in order of decreasing probability;
+        "lap" solves the assignment problem for the globally best set --
+        slower, but no early commitment can block a better pairing.
+    enforce_one_to_one : bool
+        Whether a node may keep at most one outgoing edge, which forbids a
+        trajectory from splitting. Ignored for "lap", which is one-to-one
+        by construction.
+
     """
 
-    def __init__(self, p_min: float = 0.5):
+    _METHODS = ("greedy", "lap")
+
+    def __init__(
+        self,
+        p_min: float = 0.5,
+        method: str = "greedy",
+        enforce_one_to_one: bool = False,
+    ):
+        if method not in self._METHODS:
+            raise ValueError(
+                f"method must be one of {self._METHODS}, got {method!r}"
+            )
+        if method == "lap" and not enforce_one_to_one:
+            warnings.warn(
+                "method='lap' is always one-to-one; ignoring "
+                "enforce_one_to_one=False.",
+                stacklevel=2,
+            )
+            enforce_one_to_one = True
         self.p_min = p_min
+        self.method = method
+        self.enforce_one_to_one = enforce_one_to_one
 
-    def __call__(self, graph, predictions):
+    def greedy(self, edges: np.ndarray, scores: np.ndarray):
+        """Accept edges from the highest probability down.
+
+        An edge is kept only if its target has no incoming edge yet; If
+        enforce_one_to_one is True, sources can only have one outgoing edge.
+
+        This visits every candidate, so the result is *maximal*: no edge can be
+        added afterwards without breaking a constraint. It is not *maximum*: an
+        early commitment can consume a slot that a better pairing needed.
+
+        Returns
+        -------
+        list[tuple[int, int]]
+            Pruned edges, as (source, target) node index pairs.
+
+        """
+
+        score_order = np.argsort(-scores)
+
+        # One incoming edge per target, and optionally one outgoing per source
+        used_sources, used_targets = set(), set()
+        pruned_edges = []
+        for score_idx in score_order:
+            source, target = edges[score_idx]
+            if target in used_targets:
+                continue
+            if self.enforce_one_to_one and source in used_sources:
+                continue
+            pruned_edges.append((int(source), int(target)))
+            used_sources.add(source)
+            used_targets.add(target)
+
+        return pruned_edges
+
+    def lap(
+        self, edges: np.ndarray, scores: np.ndarray, reference: np.ndarray
+    ):
+        """Keep the globally best one-to-one set of edges.
+
+        Solves the linear assignment problem, as described in Crouse, David F.
+        (DOI:10.1109/TAES.2016.140952). Sources and targets share one compacted
+        index, so the one-row-one-column property of an assignment caps both
+        the outgoing and the incoming edges of every node at one. `reference`
+        is the probability each edge has to beat to be worth creating.
+
+        Returns
+        -------
+        list[tuple[int, int]]
+            Pruned edges, as (source, target) node index pairs.
+
+        """
+
+        # Give sources and targets a single shared index, so that row i and
+        # column i of the cost matrix refer to the same node.
+        nodes = np.unique(edges)
+        rows = np.searchsorted(nodes, edges[:, 0])
+        cols = np.searchsorted(nodes, edges[:, 1])
+
+        # Clip away from zero to keep the logarithms finite.
+        scores = np.maximum(scores, 1e-12)
+        reference = np.maximum(reference, 1e-12)
+
+        # Compute the cost of an edge with the score relative to the reference.
+        # "No link" costs a hair more than zero, so that an edge which merely
+        # ties the reference is still preferred, as it is in `greedy`.
+        cost = np.full((len(nodes), len(nodes)), 1e-12)
+        cost[rows, cols] = -np.log(scores / reference)
+
+        row_index, col_index = linear_sum_assignment(cost)
+        pays_off = cost[row_index, col_index] <= 0
+        return [
+            (int(nodes[row]), int(nodes[col]))
+            for row, col in zip(row_index[pays_off], col_index[pays_off])
+        ]
+
+    def __call__(self, predictions):
         """
         Parameters
         ----------
-        graph : object
-            Graph-like structure with attributes such as 'frames'.
         predictions : tuple
-            Output of the Sinkhorn head:
-              (probs_real, edge_index, probs_all, all_src, dummy_mask)
+            Output of the Softmax head:
+              (probs_real, edge_index, probs_all, src_all, dummy_mask)
 
         Returns
         -------
         list[set[int]]
             List of trajectories, each as a set of node indices.
         """
-        (
-            probs_real,
-            edge_index,
-            probs_all,
-            all_src,
-            dummy_mask,
-        ) = predictions
+        probs_real, edge_index, probs_all, src_all, dummy_mask = (
+            tensor.detach().cpu().numpy() for tensor in predictions
+        )
+        probs_real = probs_real.squeeze(-1)
 
-        # Move to CPU numpy
-        edge_index = edge_index.detach().cpu().numpy()
-        probs_real = probs_real.detach().cpu().numpy().squeeze()
+        # Probability an edge must beat to be worth creating: the flat floor,
+        # or each source's own dummy ("no successor") when p_min is 0.
+        if self.p_min > 0.0:
+            floor = np.full(edge_index.shape[1], self.p_min)
+        else:
+            dummy_probs = np.zeros(int(dummy_mask.sum()))
+            dummy_probs[src_all[dummy_mask]] = probs_all[dummy_mask]
+            floor = dummy_probs[edge_index[0]]
 
-        # Select edges above probability threshold
-        valid = probs_real >= self.p_min
-        edges = edge_index[:, valid].T
-        scores = probs_real[valid]
+        # Select edges at or above probability threshold
+        valid_probs = probs_real >= floor
+        edges = edge_index[:, valid_probs].T
+        scores = probs_real[valid_probs]
 
-        # Optional: enforce at most one incoming edge per target
-        order = np.argsort(-scores)
-        used_targets = set()
-        pruned_edges = []
-        for i in order:
-            s, t = edges[i]
-            if t not in used_targets:
-                pruned_edges.append((int(s), int(t)))
-                used_targets.add(t)
+        if len(scores) == 0:
+            return []
+
+        if self.method == "greedy":
+            pruned_edges = self.greedy(edges, scores)
+        elif self.method == "lap":
+            pruned_edges = self.lap(edges, scores, floor[valid_probs])
+        else:
+            raise ValueError(
+                f"method must be one of {self._METHODS}, got {self.method!r}"
+            )
 
         # Build graph from pruned edges
         pruned_graph = nx.Graph()
@@ -696,8 +818,8 @@ def make_list(
     for t in trajs_from_graph:
         frames = test_graph.frames[list(t)].cpu().numpy()
         coords = (test_graph.x[list(t)].cpu().numpy()
-                  * fov_size)  # Shape (T, 2), assumed [x, y]
-        # Flip to [y, x] and concatenate with frames.
+                  * fov_size)  # Shape (T, 2), already [y, x]
+        # Stack into the columns [frame, y, x].
         traj = np.column_stack((frames, coords[:, 0], coords[:, 1]))
         # Optionally sort by frame if not ordered.
         traj = traj[np.argsort(traj[:, 0])]
@@ -707,101 +829,122 @@ def make_list(
 
 class SoftmaxHead(DeeplayModule):
     """
-    Deterministic per-source softmax head with learnable per-node dummy logits.
+    Per-source softmax head: each node's outgoing edges compete against a dummy
+    'no successor' option, so every node's candidates form one distribution.
 
-    Output:
+    Parameters
+    ----------
+    base_head : DeeplayModule
+        Edge-wise module giving one logit per edge from `edge_attr`.
+    node_features : int, optional
+        Width of `node_attr`. Read from `base_head.in_features` if omitted.
+    init_dummy_bias : float
+        Starting dummy logit, shared by every node since the dummy weight
+        starts at zero. A calibrated value is log(p / (1 - p)) + log(k), for a
+        terminal-node rate p and k outgoing edges per node.
+    train_dummy : bool
+        Whether the dummy layer learns, instead of staying a fixed threshold.
+    softclamp_cap : float
+        Logits are bounded to +-`softclamp_cap` by cap * tanh(logit / cap),
+        which is near-linear well inside the cap and saturates smoothly past
+        it, so a runaway logit is bounded without killing its gradient.
+
+    Forward return:
       probs_real : [N_edges, 1]
       edge_index : [2, N_edges]
       probs_all  : [N_edges + N_nodes]
-      all_src    : [N_edges + N_nodes]
+      src_all    : [N_edges + N_nodes]
       dummy_mask : [N_edges + N_nodes]
-      node_attr  : passed-through node attributes (for losses using coordinates)
+
     """
 
-    def __init__(self, base_head, eps=1e-8):
+    def __init__(
+            self,
+            base_head,
+            node_features=None,
+            init_dummy_bias=2.0,
+            train_dummy=False,
+            softclamp_cap=15,
+    ):
         super().__init__()
         self.base_head = base_head
-        self.eps = eps
+        self.softclamp_cap = softclamp_cap
 
-        # will be lazy-initialized based on node_attr dimension
-        self.dummy_mlp = None
+        if node_features is None:
+            node_features = getattr(base_head, "in_features", None)
+        if node_features is None:
+            raise ValueError(
+                "SoftmaxHead needs `node_features` (the width of node_attr) "
+                "to build `dummy_mlp` eagerly, so that its parameters exist "
+                "before the optimizer does."
+            )
 
-        # optional: bias for real edges initialized negative
-        self.init_real_bias = -2.0
-        self.init_dummy_bias = 2.0
-
-    def _lazy_init_dummy(self, node_attr):
-        """Create dummy_mlp once we know the dimensionality of node attributes."""
-        if self.dummy_mlp is not None:
-            return
-
-        dim = node_attr.shape[1]
-        device = node_attr.device
-
-        self.dummy_mlp = nn.Linear(dim, 1, bias=True).to(device)
-
-        # Initialize: dummy should win early in training
+        self.dummy_mlp = nn.Linear(
+            node_features, 1, bias=True
+        ).to(base_head.device)
         nn.init.constant_(self.dummy_mlp.weight, 0.0)
-        nn.init.constant_(self.dummy_mlp.bias, self.init_dummy_bias)
-
-        # Also bias the last layer of the base head (if accessible)
-        if hasattr(self.base_head, "weight"):
-            # it's a Linear layer
-            nn.init.constant_(self.base_head.bias, self.init_real_bias)
+        nn.init.constant_(self.dummy_mlp.bias, init_dummy_bias)
+        self.dummy_mlp.requires_grad_(train_dummy)
 
     def forward(self, inputs):
         edge_attr, edge_index, node_attr = inputs
-        src = edge_index[0]
         num_nodes = node_attr.shape[0]
-        device = src.device
-
-        # lazy create dummy MLP after dimension known
-        self._lazy_init_dummy(node_attr)
+        src_nodes = edge_index[0]
+        src_node_order = torch.argsort(src_nodes, stable=True)
+        device = src_nodes.device
 
         # ---- Real-edge logits ----
         logits = self.base_head(edge_attr).view(-1)  # [N_edges]
-        logits = logits.clamp(-10, 10)
 
-        # ---- Dummy logits ----
-        dummy_logits = self.dummy_mlp(node_attr).view(-1)  # [N_nodes]
+        # Soft clamp, bounding the logits without killing their gradient
+        logits = self.softclamp_cap * torch.tanh(logits / self.softclamp_cap)
 
-        # ---- Combine all ----
-        all_logits = torch.cat([logits, dummy_logits], dim=0)  # [E + N]
-        all_src = torch.cat([src, torch.arange(num_nodes, device=device)], dim=0)
-        dummy_mask = torch.arange(all_logits.numel(), device=device) >= logits.numel()
+        # Group the logits by source node
+        src_sorted = src_nodes[src_node_order]
+        logits_sorted = logits[src_node_order]
 
-        # ---- Per-source softmax ----
+        # ---- Column index of each edge within its source's group ----
+        out_edges_per_src = torch.bincount(src_sorted, minlength=num_nodes)
+        edges_accumul = torch.cumsum(out_edges_per_src, 0) - out_edges_per_src
+        cols = (torch.arange(src_sorted.numel(), device=device)
+                - edges_accumul[src_sorted])
 
-        # Scatter-reduce "amax" is not supported on MPS → manual segment max
-        max_per_src = torch.full((num_nodes,), float("-inf"), device=src.device)
+        # ---- Dense matrix, row = source node, columns 0..k-1 = its edges ----
+        # Padded with -inf, which drops the unused columns from the softmax.
+        K = int(out_edges_per_src.max()) + 1
+        logit_matrix = torch.full(
+            (num_nodes, K), float("-inf"), device=device, dtype=logits.dtype
+        )
+        logit_matrix[src_sorted, cols] = logits_sorted
 
-        # Compute maximum logit per source
-        # For each entry i: max_per_src[all_src[i]] = max(old, all_logits[i])
-        max_per_src = max_per_src.index_put_(
-            (all_src,),
-            torch.maximum(max_per_src[all_src], all_logits),
-            accumulate=False
+        # ---- Add dummy logits at column k ----
+        dummy_logits = self.dummy_mlp(node_attr).view(-1)
+
+        # Soft clamp, the same bound the real-edge logits get
+        dummy_logits = self.softclamp_cap * torch.tanh(
+            dummy_logits / self.softclamp_cap
         )
 
-        # Exponentiate shifted logits (numerically stable)
-        exp_logits = torch.exp(all_logits - max_per_src[all_src])
+        node_idx = torch.arange(num_nodes, device=device)
+        logit_matrix[node_idx, out_edges_per_src] = dummy_logits
 
-        # Per-source sum
-        sum_per_src = torch.zeros(num_nodes, device=src.device)
-        sum_per_src.index_add_(0, all_src, exp_logits)
+        # ---- Per source softmax ----
+        prob_matrix = torch.softmax(logit_matrix, dim=1)
 
-        # Softmax
-        probs_all = exp_logits / (sum_per_src[all_src] + self.eps)
-        probs_all = probs_all.clamp(min=self.eps, max=1.0)
+        # ---- Get edge and dummy probabilities ----
+        probs_sorted = prob_matrix[src_sorted, cols]  # Grouped by source
+        probs_edges = torch.empty_like(probs_sorted)
+        probs_edges[src_node_order] = probs_sorted  # Back in edge_index order
+        probs_dummy = prob_matrix[node_idx, out_edges_per_src]
 
-        # real-edge probabilities for training and metrics
-        probs_real = probs_all[~dummy_mask].unsqueeze(-1)   # [N_edges, 1]
+        # ---- Collect real and combined probabilities with dummy mask ----
+        probs_real = probs_edges.unsqueeze(-1)  # [N_edges, 1]
+        probs_all = torch.cat([probs_edges, probs_dummy], dim=0)
+        src_all = torch.cat([src_nodes, node_idx], dim=0)
+        dummy_mask = (torch.arange(probs_all.numel(), device=device)
+                      >= probs_edges.numel())
 
-
-        # ---- Extract real-edge probs ----
-        probs_real = probs_all[~dummy_mask].unsqueeze(-1)  # [N_edges, 1]
-
-        return (probs_real, edge_index, probs_all, all_src, dummy_mask)
+        return (probs_real, edge_index, probs_all, src_all, dummy_mask)
 
 
 class NodewiseNLLLoss(nn.Module):
@@ -809,7 +952,7 @@ class NodewiseNLLLoss(nn.Module):
     Proper categorical cross-entropy for the SoftmaxHead.
 
     Input:
-      y_hat = (probs_real, edge_index, probs_all, all_src, dummy_mask)
+      y_hat = (probs_real, edge_index, probs_all, src_all, dummy_mask)
       y     = [N_edges] binary vector for *real* edges only
 
     Builds correct per-source targets including dummy, and computes:
@@ -817,48 +960,38 @@ class NodewiseNLLLoss(nn.Module):
         L = - Σ_i log p(correct_edge_i)
 
     """
-    def __init__(self, eps=1e-12):
+
+    # Floor for the logarithm. Small enough that no probability a bounded
+    # logit can reach is ever clamped, as `clamp` has no gradient outside
+    # its range, which would mute the most confident mistakes.
+    _MIN_PROB = 1e-38
+
+    def __init__(self):
         super().__init__()
-        self.eps = eps
 
     def forward(self, y_hat, y):
-        probs_real, edge_index, probs_all, all_src, dummy_mask = y_hat
-        src = edge_index[0]
-        device = probs_all.device
+        # src_all holds one dummy entry per node, after the real edges
+        _, edge_index, probs_all, src_all, dummy_mask = y_hat
+        src_nodes = edge_index[0]
+        num_nodes = int(src_all.max()) + 1
 
-        # Prepare counts
-        num_nodes = int(all_src.max().item()) + 1
-
-        # Ground truth for real edges only: [N_edges]
-        y = y.view(-1).float()
-
-        # Build full y_all including dummy labels
+        # ---- Build full ground truth with dummy labels ----
+        y = y.view(-1).float()  # Ground truth for real edges only: [N_edges]
         y_all = torch.zeros_like(probs_all)
-
-        # Real edges: copy ground truth
         y_all[~dummy_mask] = y
 
-        # Identify which source nodes have a real target (positive)
-        has_real = torch.zeros(num_nodes, device=device)
-        has_real.index_add_(0, src, y)
-        has_real = has_real > 0
+        # Number of true successors each source node has, so that the dummy
+        # is the correct candidate exactly for the nodes that have none
+        n_real = torch.zeros(num_nodes, device=probs_all.device)
+        n_real.index_add_(0, src_nodes, y)
+        y_all[dummy_mask] = (n_real == 0).float()
 
-        # Dummy edges are positive only when the node has *no* real outgoing edges
-        dummy_src = all_src[dummy_mask]
-        y_all[dummy_mask] = (~has_real[dummy_src]).float()
+        # ---- Per-source cross-entropy: -log p of the correct candidate ----
+        logp = torch.log(probs_all.clamp(min=self._MIN_PROB))
+        correct_candidates = y_all > 0.5
+        loss_per_src = torch.zeros(num_nodes, device=probs_all.device)
+        loss_per_src.index_add_(
+            0, src_all[correct_candidates], -logp[correct_candidates]
+        )
 
-        # This ensures exactly one positive per source
-        # Now compute categorical cross-entropy over each source group.
-        logp = torch.log(probs_all.clamp(self.eps, 1.0))
-
-        # Reduce -log p(correct) grouped by sources
-        loss_per_src = torch.zeros(num_nodes, device=device)
-
-        pos_src = all_src[y_all > 0.5]
-        pos_logp = logp[y_all > 0.5]
-
-        loss_per_src.index_add_(0, pos_src, -pos_logp)
-
-        # Normalize over sources that actually have predictions
-        unique_sources = torch.unique(all_src)
-        return loss_per_src[unique_sources].mean()
+        return loss_per_src.mean()
